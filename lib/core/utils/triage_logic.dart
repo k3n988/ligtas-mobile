@@ -1,41 +1,32 @@
 import '../models/triage_level.dart';
 
-/// Pure function — no side effects. Deterministically assigns a triage level
-/// based on the household's vulnerability and structural damage profile.
-TriageLevel assessTriage({
-  required int medicalCount,
-  required int elderlyCount,
-  required int infantCount,
-  required bool hasDisabled,
-  required int damageLevel,
-  required int memberCount,
-}) {
-  final int vulnerable = elderlyCount + infantCount + (hasDisabled ? 1 : 0);
+/// Pure function — no side effects.
+/// Derives triage level from the household's vulnerability list.
+///
+/// CRITICAL  : Bedridden | Oxygen | Dialysis
+/// HIGH      : Wheelchair | Senior
+/// ELEVATED  : Pregnant | Infant | PWD
+/// STABLE    : (none of the above)
+TriageLevel assessTriage(List<Vulnerability> vulnerabilities) {
+  if (vulnerabilities.isEmpty) return TriageLevel.stable;
 
-  // ── CRITICAL ─────────────────────────────────────────────────────────────
-  // Structure destroyed, multiple medical needs, or medical + major damage
-  if (damageLevel == 3 ||
-      medicalCount >= 3 ||
-      (medicalCount >= 1 && damageLevel >= 2) ||
-      (medicalCount >= 2 && vulnerable >= 1)) {
-    return TriageLevel.critical;
-  }
+  const criticalSet = {
+    Vulnerability.bedridden,
+    Vulnerability.oxygen,
+    Vulnerability.dialysis,
+  };
+  const highSet = {
+    Vulnerability.wheelchair,
+    Vulnerability.senior,
+  };
+  const elevatedSet = {
+    Vulnerability.pregnant,
+    Vulnerability.infant,
+    Vulnerability.pwd,
+  };
 
-  // ── HIGH ─────────────────────────────────────────────────────────────────
-  // Major structural damage, any medical need, many vulnerable, or disabled
-  if (damageLevel == 2 ||
-      medicalCount >= 1 ||
-      vulnerable >= 3 ||
-      (hasDisabled && damageLevel >= 1)) {
-    return TriageLevel.high;
-  }
-
-  // ── ELEVATED ─────────────────────────────────────────────────────────────
-  // Minor damage or presence of vulnerable members
-  if (damageLevel == 1 || vulnerable >= 1) {
-    return TriageLevel.elevated;
-  }
-
-  // ── STABLE ───────────────────────────────────────────────────────────────
+  if (vulnerabilities.any(criticalSet.contains)) return TriageLevel.critical;
+  if (vulnerabilities.any(highSet.contains))     return TriageLevel.high;
+  if (vulnerabilities.any(elevatedSet.contains)) return TriageLevel.elevated;
   return TriageLevel.stable;
 }

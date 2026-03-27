@@ -7,76 +7,73 @@ import '../../core/utils/triage_logic.dart';
 import '../../providers/app_state.dart';
 
 class RegistrationFormState {
-  final String headName;
+  final String head;
+  final String contact;
+  final String city;
   final String barangay;
-  final int memberCount;
-  final int elderlyCount;
-  final int infantCount;
-  final int medicalCount;
-  final bool hasDisabled;
-  final int damageLevel;
+  final String purok;
+  final String street;
+  final StructureType structure;
+  final int occupants;
+  final Set<Vulnerability> vulnerabilities;
+  final String notes;
   final double? latitude;
   final double? longitude;
   final bool isLocating;
   final bool isSubmitting;
-  final TriageLevel? preview;
 
   const RegistrationFormState({
-    this.headName = '',
+    this.head = '',
+    this.contact = '',
+    this.city = '',
     this.barangay = '',
-    this.memberCount = 1,
-    this.elderlyCount = 0,
-    this.infantCount = 0,
-    this.medicalCount = 0,
-    this.hasDisabled = false,
-    this.damageLevel = 0,
+    this.purok = '',
+    this.street = '',
+    this.structure = StructureType.singleStory,
+    this.occupants = 1,
+    this.vulnerabilities = const {},
+    this.notes = '',
     this.latitude,
     this.longitude,
     this.isLocating = false,
     this.isSubmitting = false,
-    this.preview,
   });
 
+  TriageLevel get previewTriage => assessTriage(vulnerabilities.toList());
+
   RegistrationFormState copyWith({
-    String? headName,
+    String? head,
+    String? contact,
+    String? city,
     String? barangay,
-    int? memberCount,
-    int? elderlyCount,
-    int? infantCount,
-    int? medicalCount,
-    bool? hasDisabled,
-    int? damageLevel,
+    String? purok,
+    String? street,
+    StructureType? structure,
+    int? occupants,
+    Set<Vulnerability>? vulnerabilities,
+    String? notes,
     double? latitude,
     double? longitude,
     bool? isLocating,
     bool? isSubmitting,
-    TriageLevel? preview,
   }) {
     return RegistrationFormState(
-      headName: headName ?? this.headName,
+      head: head ?? this.head,
+      contact: contact ?? this.contact,
+      city: city ?? this.city,
       barangay: barangay ?? this.barangay,
-      memberCount: memberCount ?? this.memberCount,
-      elderlyCount: elderlyCount ?? this.elderlyCount,
-      infantCount: infantCount ?? this.infantCount,
-      medicalCount: medicalCount ?? this.medicalCount,
-      hasDisabled: hasDisabled ?? this.hasDisabled,
-      damageLevel: damageLevel ?? this.damageLevel,
+      purok: purok ?? this.purok,
+      street: street ?? this.street,
+      structure: structure ?? this.structure,
+      occupants: occupants ?? this.occupants,
+      vulnerabilities: vulnerabilities ?? this.vulnerabilities,
+      notes: notes ?? this.notes,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       isLocating: isLocating ?? this.isLocating,
       isSubmitting: isSubmitting ?? this.isSubmitting,
-      preview: preview ?? this.preview,
     );
   }
-
-  TriageLevel computePreview() => assessTriage(
-        medicalCount: medicalCount,
-        elderlyCount: elderlyCount,
-        infantCount: infantCount,
-        hasDisabled: hasDisabled,
-        damageLevel: damageLevel,
-        memberCount: memberCount,
-      );
 }
 
 class RegistrationNotifier extends StateNotifier<RegistrationFormState> {
@@ -86,9 +83,22 @@ class RegistrationNotifier extends StateNotifier<RegistrationFormState> {
 
   RegistrationNotifier(this._ref) : super(const RegistrationFormState());
 
-  void update(RegistrationFormState Function(RegistrationFormState) fn) {
+  void setField(RegistrationFormState Function(RegistrationFormState) fn) {
     state = fn(state);
-    state = state.copyWith(preview: state.computePreview());
+  }
+
+  void toggleVulnerability(Vulnerability v) {
+    final set = Set<Vulnerability>.from(state.vulnerabilities);
+    if (set.contains(v)) {
+      set.remove(v);
+    } else {
+      set.add(v);
+    }
+    state = state.copyWith(vulnerabilities: set);
+  }
+
+  void setCity(String city) {
+    state = state.copyWith(city: city, barangay: '');
   }
 
   Future<void> captureLocation() async {
@@ -101,30 +111,32 @@ class RegistrationNotifier extends StateNotifier<RegistrationFormState> {
     if (state.latitude == null) await captureLocation();
     state = state.copyWith(isSubmitting: true);
 
-    final level = state.computePreview();
     final h = Household(
-      id: _uuid.v4(),
-      headName: state.headName,
-      barangay: state.barangay,
-      memberCount: state.memberCount,
-      elderlyCount: state.elderlyCount,
-      infantCount: state.infantCount,
-      medicalCount: state.medicalCount,
-      hasDisabled: state.hasDisabled,
-      damageLevel: state.damageLevel,
+      id: 'HH-${_uuid.v4().substring(0, 6).toUpperCase()}',
       latitude: state.latitude!,
       longitude: state.longitude!,
-      triageLevel: level,
+      city: state.city,
+      barangay: state.barangay,
+      purok: state.purok,
+      street: state.street,
+      structure: state.structure,
+      head: state.head,
+      contact: state.contact,
+      occupants: state.occupants,
+      vulnerabilities: state.vulnerabilities.toList(),
+      notes: state.notes,
+      status: HouseholdStatus.pending,
+      triageLevel: state.previewTriage,
       registeredAt: DateTime.now(),
     );
 
     _ref.read(householdProvider.notifier).add(h);
-    state = const RegistrationFormState(); // reset
+    state = const RegistrationFormState();
     return true;
   }
 }
 
-final registrationProvider =
-    StateNotifierProvider.autoDispose<RegistrationNotifier, RegistrationFormState>(
+final registrationProvider = StateNotifierProvider.autoDispose<
+    RegistrationNotifier, RegistrationFormState>(
   (ref) => RegistrationNotifier(ref),
 );

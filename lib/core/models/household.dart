@@ -1,91 +1,111 @@
 import 'package:equatable/equatable.dart';
 import 'triage_level.dart';
 
+enum HouseholdStatus { pending, rescued }
+
+enum StructureType { singleStory, lightMaterials, multiStory }
+
+extension StructureTypeX on StructureType {
+  String get label {
+    switch (this) {
+      case StructureType.singleStory:    return 'Single-story';
+      case StructureType.lightMaterials: return 'Light materials';
+      case StructureType.multiStory:     return 'Multi-story';
+    }
+  }
+}
+
 class Household extends Equatable {
   final String id;
-  final String headName;
-  final String barangay;
-  final int memberCount;
-  final int elderlyCount;
-  final int infantCount;
-  final int medicalCount;
-  final bool hasDisabled;
-
-  /// 0 = None · 1 = Minor · 2 = Major · 3 = Destroyed
-  final int damageLevel;
-
   final double latitude;
   final double longitude;
+  final String city;
+  final String barangay;
+  final String purok;
+  final String street;
+  final StructureType structure;
+  final String head;
+  final String contact;
+  final int occupants;
+  final List<Vulnerability> vulnerabilities;
+  final String notes;
+  final HouseholdStatus status;
   final TriageLevel triageLevel;
+  final String? assignedAssetId;
+  final DateTime? dispatchedAt;
   final DateTime registeredAt;
-  final bool isRescued;
 
   const Household({
     required this.id,
-    required this.headName,
-    required this.barangay,
-    required this.memberCount,
-    required this.elderlyCount,
-    required this.infantCount,
-    required this.medicalCount,
-    required this.hasDisabled,
-    required this.damageLevel,
     required this.latitude,
     required this.longitude,
+    required this.city,
+    required this.barangay,
+    required this.purok,
+    required this.street,
+    required this.structure,
+    required this.head,
+    required this.contact,
+    required this.occupants,
+    required this.vulnerabilities,
+    required this.notes,
+    required this.status,
     required this.triageLevel,
     required this.registeredAt,
-    this.isRescued = false,
+    this.assignedAssetId,
+    this.dispatchedAt,
   });
+
+  bool get isRescued => status == HouseholdStatus.rescued;
+  bool get isDispatched => assignedAssetId != null && status == HouseholdStatus.pending;
 
   Household copyWith({
     String? id,
-    String? headName,
-    String? barangay,
-    int? memberCount,
-    int? elderlyCount,
-    int? infantCount,
-    int? medicalCount,
-    bool? hasDisabled,
-    int? damageLevel,
     double? latitude,
     double? longitude,
+    String? city,
+    String? barangay,
+    String? purok,
+    String? street,
+    StructureType? structure,
+    String? head,
+    String? contact,
+    int? occupants,
+    List<Vulnerability>? vulnerabilities,
+    String? notes,
+    HouseholdStatus? status,
     TriageLevel? triageLevel,
     DateTime? registeredAt,
-    bool? isRescued,
+    String? assignedAssetId,
+    DateTime? dispatchedAt,
+    bool clearAssignment = false,
   }) {
     return Household(
       id: id ?? this.id,
-      headName: headName ?? this.headName,
-      barangay: barangay ?? this.barangay,
-      memberCount: memberCount ?? this.memberCount,
-      elderlyCount: elderlyCount ?? this.elderlyCount,
-      infantCount: infantCount ?? this.infantCount,
-      medicalCount: medicalCount ?? this.medicalCount,
-      hasDisabled: hasDisabled ?? this.hasDisabled,
-      damageLevel: damageLevel ?? this.damageLevel,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
+      city: city ?? this.city,
+      barangay: barangay ?? this.barangay,
+      purok: purok ?? this.purok,
+      street: street ?? this.street,
+      structure: structure ?? this.structure,
+      head: head ?? this.head,
+      contact: contact ?? this.contact,
+      occupants: occupants ?? this.occupants,
+      vulnerabilities: vulnerabilities ?? this.vulnerabilities,
+      notes: notes ?? this.notes,
+      status: status ?? this.status,
       triageLevel: triageLevel ?? this.triageLevel,
       registeredAt: registeredAt ?? this.registeredAt,
-      isRescued: isRescued ?? this.isRescued,
+      assignedAssetId: clearAssignment ? null : (assignedAssetId ?? this.assignedAssetId),
+      dispatchedAt: clearAssignment ? null : (dispatchedAt ?? this.dispatchedAt),
     );
   }
 
   @override
   List<Object?> get props => [
-        id,
-        headName,
-        barangay,
-        memberCount,
-        elderlyCount,
-        infantCount,
-        medicalCount,
-        hasDisabled,
-        damageLevel,
-        latitude,
-        longitude,
-        triageLevel,
-        registeredAt,
-        isRescued,
+        id, latitude, longitude, city, barangay, purok, street,
+        structure, head, contact, occupants, vulnerabilities, notes,
+        status, triageLevel, registeredAt, assignedAssetId, dispatchedAt,
       ];
 }

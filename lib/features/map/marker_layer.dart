@@ -1,36 +1,43 @@
+import 'package:flutter/painting.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
-import '../../core/models/triage_level.dart';
+import 'marker_icons.dart';
 
-/// Builds the [Set<Marker>] passed to [GoogleMap.markers].
-Set<Marker> buildHouseholdMarkers({
+/// Builds household [Marker]s using pre-loaded circular icons.
+/// Falls back to default hue markers while icons are loading.
+Future<Set<Marker>> buildHouseholdMarkersAsync({
   required List<Household> households,
   required void Function(Household) onTap,
-}) {
-  return households.map((h) {
-    final hue = h.isRescued ? BitmapDescriptor.hueAzure : _hue(h.triageLevel);
-    return Marker(
+}) async {
+  final markers = <Marker>{};
+  for (final h in households) {
+    final color = markerColorFor(h.triageLevel, rescued: h.isRescued);
+    final icon = await circularMarker(color);
+    markers.add(Marker(
       markerId: MarkerId(h.id),
       position: LatLng(h.latitude, h.longitude),
-      icon: BitmapDescriptor.defaultMarkerWithHue(hue),
-      infoWindow: InfoWindow(
-        title: h.headName,
-        snippet: '${h.triageLevel.label} · ${h.barangay}',
-      ),
+      icon: icon,
+      anchor: const Offset(0.5, 0.5),
       onTap: () => onTap(h),
-    );
-  }).toSet();
+    ));
+  }
+  return markers;
 }
 
-double _hue(TriageLevel level) {
-  switch (level) {
-    case TriageLevel.critical:
-      return BitmapDescriptor.hueRed;
-    case TriageLevel.high:
-      return BitmapDescriptor.hueOrange;
-    case TriageLevel.elevated:
-      return BitmapDescriptor.hueYellow;
-    case TriageLevel.stable:
-      return BitmapDescriptor.hueGreen;
-  }
+/// Builds asset [Marker]s using the asset's emoji icon rendered as a text label.
+/// These are informational only — no tap needed.
+Set<Marker> buildAssetMarkers(List<Asset> assets) {
+  return assets.map((a) {
+    return Marker(
+      markerId: MarkerId('asset_${a.id}'),
+      position: LatLng(a.latitude, a.longitude),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+      infoWindow: InfoWindow(
+        title: '${a.icon} ${a.name}',
+        snippet: a.unit,
+      ),
+      alpha: 0.85,
+    );
+  }).toSet();
 }

@@ -7,29 +7,14 @@ class AssetCard extends StatelessWidget {
   final Asset asset;
   final void Function(AssetStatus) onStatusChange;
 
-  const AssetCard({super.key, required this.asset, required this.onStatusChange});
+  const AssetCard(
+      {super.key, required this.asset, required this.onStatusChange});
 
   Color get _statusColor {
     switch (asset.status) {
-      case AssetStatus.available:
-        return AppColors.available;
-      case AssetStatus.deployed:
-        return AppColors.deployed;
-      case AssetStatus.maintenance:
-        return AppColors.maintenance;
-    }
-  }
-
-  IconData get _typeIcon {
-    switch (asset.type) {
-      case AssetType.boat:
-        return Icons.directions_boat;
-      case AssetType.truck:
-        return Icons.local_shipping;
-      case AssetType.helicopter:
-        return Icons.flight;
-      case AssetType.medicalTeam:
-        return Icons.local_hospital;
+      case AssetStatus.active:      return AppColors.available;
+      case AssetStatus.dispatching: return AppColors.deployed;
+      case AssetStatus.standby:     return AppColors.maintenance;
     }
   }
 
@@ -44,20 +29,21 @@ class AssetCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // ── Main row ───────────────────────────────────────────────────
+          // ── Main row ──────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.all(14),
             child: Row(
               children: [
-                // Type icon
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
                     color: _statusColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(_typeIcon, color: _statusColor, size: 22),
+                  alignment: Alignment.center,
+                  child: Text(asset.icon,
+                      style: const TextStyle(fontSize: 24)),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -65,71 +51,86 @@ class AssetCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(asset.name, style: AppTextStyles.titleLarge),
-                      Text(asset.type.label, style: AppTextStyles.bodyMedium),
+                      Text('${asset.type} · ${asset.unit}',
+                          style: AppTextStyles.bodyMedium),
                     ],
                   ),
                 ),
-                // Status badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: _statusColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _statusColor.withValues(alpha: 0.5)),
+                    border: Border.all(
+                        color: _statusColor.withValues(alpha: 0.5)),
                   ),
                   child: Text(
                     asset.status.label.toUpperCase(),
-                    style: AppTextStyles.labelSmall.copyWith(color: _statusColor, fontSize: 10),
+                    style: AppTextStyles.labelSmall
+                        .copyWith(color: _statusColor, fontSize: 10),
                   ),
                 ),
               ],
             ),
           ),
 
-          // ── Details row ────────────────────────────────────────────────
+          // ── Details ───────────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: AppColors.divider)),
-            ),
+                border: Border(top: BorderSide(color: AppColors.divider))),
             child: Row(
               children: [
-                Icon(Icons.location_on_outlined, size: 14, color: AppColors.textSecondary),
+                Icon(Icons.people_outline,
+                    size: 14, color: AppColors.textSecondary),
                 const SizedBox(width: 4),
-                Expanded(child: Text(asset.location, style: AppTextStyles.bodyMedium)),
-                Icon(Icons.people_outline, size: 14, color: AppColors.textSecondary),
+                Text('Cap: ${asset.capacity}',
+                    style: AppTextStyles.bodyMedium),
+                const SizedBox(width: 16),
+                Icon(Icons.gps_fixed,
+                    size: 14, color: AppColors.textSecondary),
                 const SizedBox(width: 4),
-                Text('Cap: ${asset.capacity}', style: AppTextStyles.bodyMedium),
+                Text(
+                  '${asset.latitude.toStringAsFixed(4)}, ${asset.longitude.toStringAsFixed(4)}',
+                  style: AppTextStyles.bodyMedium,
+                ),
               ],
             ),
           ),
 
-          // ── Status actions ─────────────────────────────────────────────
+          // ── Status toggle ─────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
             child: Row(
               children: AssetStatus.values.map((s) {
                 final isActive = asset.status == s;
+                final c = _colorFor(s);
                 return Expanded(
                   child: Padding(
-                    padding: EdgeInsets.only(right: s != AssetStatus.maintenance ? 8 : 0),
+                    padding: EdgeInsets.only(
+                        right: s != AssetStatus.standby ? 8 : 0),
                     child: GestureDetector(
                       onTap: isActive ? null : () => onStatusChange(s),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 180),
                         padding: const EdgeInsets.symmetric(vertical: 7),
                         decoration: BoxDecoration(
-                          color: isActive ? _statusColorFor(s).withValues(alpha: 0.2) : AppColors.surface,
+                          color: isActive
+                              ? c.withValues(alpha: 0.2)
+                              : AppColors.surface,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: isActive ? _statusColorFor(s) : AppColors.divider,
-                          ),
+                              color: isActive
+                                  ? c
+                                  : AppColors.divider),
                         ),
                         alignment: Alignment.center,
                         child: Text(
                           s.label,
                           style: AppTextStyles.labelSmall.copyWith(
-                            color: isActive ? _statusColorFor(s) : AppColors.textMuted,
+                            color: isActive ? c : AppColors.textMuted,
                             fontSize: 10,
                           ),
                         ),
@@ -145,14 +146,11 @@ class AssetCard extends StatelessWidget {
     );
   }
 
-  Color _statusColorFor(AssetStatus s) {
+  Color _colorFor(AssetStatus s) {
     switch (s) {
-      case AssetStatus.available:
-        return AppColors.available;
-      case AssetStatus.deployed:
-        return AppColors.deployed;
-      case AssetStatus.maintenance:
-        return AppColors.maintenance;
+      case AssetStatus.active:      return AppColors.available;
+      case AssetStatus.dispatching: return AppColors.deployed;
+      case AssetStatus.standby:     return AppColors.maintenance;
     }
   }
 }

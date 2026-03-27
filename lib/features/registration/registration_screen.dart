@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/data/lgu_data.dart';
+import '../../core/models/household.dart';
+import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import 'registration_provider.dart';
 import 'triage_preview.dart';
-
-const _barangays = [
-  'Brgy. 001', 'Brgy. 090', 'Brgy. 145', 'Brgy. 176',
-  'Brgy. 201', 'Brgy. 220', 'Brgy. 255', 'Brgy. 289',
-];
-
-const _damageLabels = ['None', 'Minor', 'Major', 'Destroyed'];
 
 class RegistrationScreen extends ConsumerWidget {
   const RegistrationScreen({super.key});
@@ -38,75 +34,93 @@ class RegistrationScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // ── Triage preview ──────────────────────────────────────────
-            if (state.preview != null) ...[
-              TriagePreviewCard(level: state.preview!),
-              const SizedBox(height: 20),
-            ],
+            // ── Live triage preview ─────────────────────────────────────
+            TriagePreviewCard(level: state.previewTriage),
+            const SizedBox(height: 20),
 
-            // ── Section: Household Info ─────────────────────────────────
-            _SectionHeader('Household Information'),
+            // ── Household Head ──────────────────────────────────────────
+            _sectionHeader('Household Information'),
             const SizedBox(height: 12),
-            _field(
-              label: 'Head of Household',
-              hint: 'Full name',
+            _textField(
+              label: 'Head of Household *',
               icon: Icons.person_outline,
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-              onChanged: (v) => notifier.update((s) => s.copyWith(headName: v)),
+              onChanged: (v) => notifier.setField((s) => s.copyWith(head: v)),
             ),
             const SizedBox(height: 12),
-            _DropdownField(
-              label: 'Barangay',
-              icon: Icons.location_on_outlined,
-              items: _barangays,
-              value: state.barangay.isEmpty ? null : state.barangay,
-              onChanged: (v) => notifier.update((s) => s.copyWith(barangay: v ?? '')),
+            _textField(
+              label: 'Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+              onChanged: (v) => notifier.setField((s) => s.copyWith(contact: v)),
             ),
             const SizedBox(height: 20),
 
-            // ── Section: Members ────────────────────────────────────────
-            _SectionHeader('Household Members'),
+            // ── Location ────────────────────────────────────────────────
+            _sectionHeader('Location'),
+            const SizedBox(height: 12),
+            _CityBarangayPicker(state: state, notifier: notifier),
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(child: _CounterTile(label: 'Total', icon: Icons.group, value: state.memberCount, min: 1, onChanged: (v) => notifier.update((s) => s.copyWith(memberCount: v)))),
-              const SizedBox(width: 10),
-              Expanded(child: _CounterTile(label: 'Elderly', icon: Icons.elderly, value: state.elderlyCount, onChanged: (v) => notifier.update((s) => s.copyWith(elderlyCount: v)))),
-              const SizedBox(width: 10),
-              Expanded(child: _CounterTile(label: 'Infants', icon: Icons.child_care, value: state.infantCount, onChanged: (v) => notifier.update((s) => s.copyWith(infantCount: v)))),
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: _CounterTile(label: 'Medical', icon: Icons.medical_services, value: state.medicalCount, onChanged: (v) => notifier.update((s) => s.copyWith(medicalCount: v)))),
+              Expanded(
+                child: _textField(
+                  label: 'Purok',
+                  icon: Icons.place_outlined,
+                  onChanged: (v) => notifier.setField((s) => s.copyWith(purok: v)),
+                ),
+              ),
               const SizedBox(width: 10),
               Expanded(
-                flex: 2,
-                child: _ToggleTile(
-                  label: 'Person w/ Disability',
-                  icon: Icons.accessible,
-                  value: state.hasDisabled,
-                  onChanged: (v) => notifier.update((s) => s.copyWith(hasDisabled: v)),
+                child: _textField(
+                  label: 'Street',
+                  icon: Icons.add_road,
+                  onChanged: (v) => notifier.setField((s) => s.copyWith(street: v)),
                 ),
               ),
             ]),
-            const SizedBox(height: 20),
-
-            // ── Section: Damage Level ────────────────────────────────────
-            _SectionHeader('Structural Damage'),
             const SizedBox(height: 12),
-            _DamagePicker(
-              value: state.damageLevel,
-              onChanged: (v) => notifier.update((s) => s.copyWith(damageLevel: v)),
+            _StructurePicker(
+              value: state.structure,
+              onChanged: (v) => notifier.setField((s) => s.copyWith(structure: v)),
             ),
-            const SizedBox(height: 20),
-
-            // ── Section: Location ────────────────────────────────────────
-            _SectionHeader('Location'),
             const SizedBox(height: 12),
             _LocationTile(
               lat: state.latitude,
               lng: state.longitude,
               isLocating: state.isLocating,
               onCapture: notifier.captureLocation,
+            ),
+            const SizedBox(height: 20),
+
+            // ── Occupants ───────────────────────────────────────────────
+            _sectionHeader('Occupants'),
+            const SizedBox(height: 12),
+            _OccupantCounter(
+              value: state.occupants,
+              onChanged: (v) => notifier.setField((s) => s.copyWith(occupants: v)),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Vulnerabilities ─────────────────────────────────────────
+            _sectionHeader('Vulnerabilities'),
+            const SizedBox(height: 4),
+            Text('Check all that apply — triage level updates automatically',
+                style: AppTextStyles.bodyMedium),
+            const SizedBox(height: 12),
+            _VulnerabilityGrid(
+              selected: state.vulnerabilities,
+              onToggle: notifier.toggleVulnerability,
+            ),
+            const SizedBox(height: 20),
+
+            // ── Notes ───────────────────────────────────────────────────
+            _sectionHeader('Notes'),
+            const SizedBox(height: 12),
+            _textField(
+              label: 'Additional notes (optional)',
+              icon: Icons.notes_outlined,
+              maxLines: 3,
+              onChanged: (v) => notifier.setField((s) => s.copyWith(notes: v)),
             ),
             const SizedBox(height: 32),
 
@@ -116,14 +130,16 @@ class RegistrationScreen extends ConsumerWidget {
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.accent,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: state.isSubmitting
                     ? null
                     : () async {
-                        if (state.barangay.isEmpty) {
+                        if (state.city.isEmpty || state.barangay.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Please select a barangay')),
+                            const SnackBar(
+                                content: Text('Please select city and barangay')),
                           );
                           return;
                         }
@@ -142,7 +158,11 @@ class RegistrationScreen extends ConsumerWidget {
                       },
                 child: state.isSubmitting
                     ? const CircularProgressIndicator(color: Colors.white)
-                    : Text('Submit Registration', style: AppTextStyles.titleLarge.copyWith(color: Colors.white)),
+                    : Text(
+                        'Submit Registration',
+                        style: AppTextStyles.titleLarge
+                            .copyWith(color: Colors.white),
+                      ),
               ),
             ),
             const SizedBox(height: 20),
@@ -151,63 +171,111 @@ class RegistrationScreen extends ConsumerWidget {
       ),
     );
   }
+}
 
-  Widget _field({
-    required String label,
-    required String hint,
-    required IconData icon,
-    String? Function(String?)? validator,
-    required void Function(String) onChanged,
-  }) {
-    return TextFormField(
-      style: AppTextStyles.bodyLarge,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 20),
-        labelStyle: AppTextStyles.bodyMedium,
-        filled: true,
-        fillColor: AppColors.cardBackground,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.divider)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.divider)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.accent, width: 1.5)),
-      ),
-      validator: validator,
-      onChanged: onChanged,
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+Widget _sectionHeader(String title) => Text(
+      title.toUpperCase(),
+      style: AppTextStyles.labelLarge.copyWith(color: AppColors.accent),
+    );
+
+Widget _textField({
+  required String label,
+  required IconData icon,
+  String? Function(String?)? validator,
+  void Function(String)? onChanged,
+  TextInputType? keyboardType,
+  int maxLines = 1,
+}) {
+  return TextFormField(
+    style: AppTextStyles.bodyLarge,
+    maxLines: maxLines,
+    keyboardType: keyboardType,
+    decoration: InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 20),
+      labelStyle: AppTextStyles.bodyMedium,
+      filled: true,
+      fillColor: AppColors.cardBackground,
+      border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider)),
+      enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider)),
+      focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.accent, width: 1.5)),
+    ),
+    validator: validator,
+    onChanged: onChanged,
+  );
+}
+
+// ── City / Barangay picker ────────────────────────────────────────────────────
+
+class _CityBarangayPicker extends StatelessWidget {
+  final RegistrationFormState state;
+  final RegistrationNotifier notifier;
+
+  const _CityBarangayPicker({required this.state, required this.notifier});
+
+  @override
+  Widget build(BuildContext context) {
+    final barangays = cityBarangays[state.city] ?? [];
+
+    return Column(
+      children: [
+        _StyledDropdown<String>(
+          label: 'City / Municipality *',
+          icon: Icons.location_city_outlined,
+          value: state.city.isEmpty ? null : state.city,
+          items: negrosOccidentalCities,
+          itemLabel: (c) => c,
+          onChanged: (v) { if (v != null) notifier.setCity(v); },
+        ),
+        const SizedBox(height: 12),
+        _StyledDropdown<String>(
+          label: 'Barangay *',
+          icon: Icons.holiday_village_outlined,
+          value: state.barangay.isEmpty ? null : state.barangay,
+          items: barangays,
+          itemLabel: (b) => b,
+          enabled: state.city.isNotEmpty,
+          onChanged: (v) {
+            if (v != null) notifier.setField((s) => s.copyWith(barangay: v));
+          },
+        ),
+      ],
     );
   }
 }
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
+// ── Generic styled dropdown ───────────────────────────────────────────────────
 
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  const _SectionHeader(this.title);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(title.toUpperCase(), style: AppTextStyles.labelLarge.copyWith(color: AppColors.accent));
-  }
-}
-
-class _DropdownField extends StatelessWidget {
+class _StyledDropdown<T> extends StatelessWidget {
   final String label;
   final IconData icon;
-  final List<String> items;
-  final String? value;
-  final void Function(String?) onChanged;
+  final T? value;
+  final List<T> items;
+  final String Function(T) itemLabel;
+  final void Function(T?) onChanged;
+  final bool enabled;
 
-  const _DropdownField({
+  const _StyledDropdown({
     required this.label,
     required this.icon,
-    required this.items,
     required this.value,
+    required this.items,
+    required this.itemLabel,
     required this.onChanged,
+    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(
+    return DropdownButtonFormField<T>(
       initialValue: value,
       dropdownColor: AppColors.cardBackground,
       style: AppTextStyles.bodyLarge,
@@ -216,54 +284,116 @@ class _DropdownField extends StatelessWidget {
         prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 20),
         labelStyle: AppTextStyles.bodyMedium,
         filled: true,
-        fillColor: AppColors.cardBackground,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.divider)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.divider)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.accent, width: 1.5)),
+        fillColor: enabled ? AppColors.cardBackground : AppColors.surface,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.divider)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.divider)),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.accent, width: 1.5)),
       ),
-      items: items.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
-      onChanged: onChanged,
+      items: enabled
+          ? items
+              .map((i) => DropdownMenuItem(value: i, child: Text(itemLabel(i))))
+              .toList()
+          : [],
+      onChanged: enabled ? onChanged : null,
     );
   }
 }
 
-class _CounterTile extends StatelessWidget {
-  final String label;
-  final IconData icon;
+// ── Structure picker ──────────────────────────────────────────────────────────
+
+class _StructurePicker extends StatelessWidget {
+  final StructureType value;
+  final void Function(StructureType) onChanged;
+
+  const _StructurePicker({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: StructureType.values.map((s) {
+        final selected = value == s;
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => onChanged(s),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              margin: EdgeInsets.only(
+                  right: s != StructureType.multiStory ? 8 : 0),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: selected
+                    ? AppColors.accent.withValues(alpha: 0.15)
+                    : AppColors.cardBackground,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.divider,
+                  width: selected ? 1.5 : 1,
+                ),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.home,
+                      color: selected
+                          ? AppColors.accent
+                          : AppColors.textSecondary,
+                      size: 20),
+                  const SizedBox(height: 4),
+                  Text(
+                    s.label,
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.labelSmall.copyWith(
+                      color: selected
+                          ? AppColors.accent
+                          : AppColors.textSecondary,
+                      fontSize: 9,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+// ── Occupant counter ──────────────────────────────────────────────────────────
+
+class _OccupantCounter extends StatelessWidget {
   final int value;
-  final int min;
   final void Function(int) onChanged;
 
-  const _CounterTile({
-    required this.label,
-    required this.icon,
-    required this.value,
-    this.min = 0,
-    required this.onChanged,
-  });
+  const _OccupantCounter({required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      decoration: BoxDecoration(color: AppColors.cardBackground, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.divider)),
-      child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
         children: [
-          Icon(icon, color: AppColors.textSecondary, size: 18),
-          const SizedBox(height: 4),
-          Text(label, style: AppTextStyles.labelSmall),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _btn(Icons.remove, () { if (value > min) onChanged(value - 1); }),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text('$value', style: AppTextStyles.headlineMedium),
-              ),
-              _btn(Icons.add, () => onChanged(value + 1)),
-            ],
+          const Icon(Icons.group_outlined,
+              color: AppColors.textSecondary, size: 20),
+          const SizedBox(width: 12),
+          Text('Total Occupants', style: AppTextStyles.bodyLarge),
+          const Spacer(),
+          _btn(Icons.remove, () { if (value > 1) onChanged(value - 1); }),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text('$value', style: AppTextStyles.headlineMedium),
           ),
+          _btn(Icons.add, () => onChanged(value + 1)),
         ],
       ),
     );
@@ -272,83 +402,77 @@ class _CounterTile extends StatelessWidget {
   Widget _btn(IconData icon, VoidCallback fn) => GestureDetector(
         onTap: fn,
         child: Container(
-          width: 24, height: 24,
-          decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(6)),
-          child: Icon(icon, size: 14, color: AppColors.textPrimary),
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: AppColors.divider,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(icon, size: 16, color: AppColors.textPrimary),
         ),
       );
 }
 
-class _ToggleTile extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool value;
-  final void Function(bool) onChanged;
+// ── Vulnerability grid ────────────────────────────────────────────────────────
 
-  const _ToggleTile({required this.label, required this.icon, required this.value, required this.onChanged});
+class _VulnerabilityGrid extends StatelessWidget {
+  final Set<Vulnerability> selected;
+  final void Function(Vulnerability) onToggle;
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: value ? AppColors.accent.withValues(alpha: 0.15) : AppColors.cardBackground,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: value ? AppColors.accent : AppColors.divider),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: value ? AppColors.accent : AppColors.textSecondary, size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text(label, style: AppTextStyles.bodyMedium.copyWith(color: value ? AppColors.accent : AppColors.textSecondary))),
-            Switch(value: value, onChanged: onChanged, activeThumbColor: AppColors.accent),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DamagePicker extends StatelessWidget {
-  final int value;
-  final void Function(int) onChanged;
-  const _DamagePicker({required this.value, required this.onChanged});
-
-  static const _colors = [AppColors.stable, AppColors.elevated, AppColors.high, AppColors.critical];
+  const _VulnerabilityGrid(
+      {required this.selected, required this.onToggle});
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: List.generate(4, (i) {
-        final selected = value == i;
-        return Expanded(
-          child: GestureDetector(
-            onTap: () => onChanged(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: EdgeInsets.only(right: i < 3 ? 8 : 0),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: selected ? _colors[i].withValues(alpha: 0.2) : AppColors.cardBackground,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: selected ? _colors[i] : AppColors.divider, width: selected ? 2 : 1),
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: Vulnerability.values.map((v) {
+        final isSelected = selected.contains(v);
+        final level = v.triggersLevel;
+        final color = level.color;
+        return GestureDetector(
+          onTap: () => onToggle(v),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? color.withValues(alpha: 0.15)
+                  : AppColors.cardBackground,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isSelected ? color : AppColors.divider,
+                width: isSelected ? 1.5 : 1,
               ),
-              child: Column(
-                children: [
-                  Icon(Icons.home, color: _colors[i], size: 22),
-                  const SizedBox(height: 4),
-                  Text(_damageLabels[i], style: AppTextStyles.labelSmall.copyWith(color: _colors[i])),
-                ],
-              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(v.icon,
+                    size: 16,
+                    color: isSelected ? color : AppColors.textSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  v.label,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: isSelected ? color : AppColors.textSecondary,
+                    fontWeight: isSelected
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+              ],
             ),
           ),
         );
-      }),
+      }).toList(),
     );
   }
 }
+
+// ── Location tile ─────────────────────────────────────────────────────────────
 
 class _LocationTile extends StatelessWidget {
   final double? lat;
@@ -356,27 +480,51 @@ class _LocationTile extends StatelessWidget {
   final bool isLocating;
   final Future<void> Function() onCapture;
 
-  const _LocationTile({required this.lat, required this.lng, required this.isLocating, required this.onCapture});
+  const _LocationTile(
+      {required this.lat,
+      required this.lng,
+      required this.isLocating,
+      required this.onCapture});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: AppColors.cardBackground, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.divider)),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
       child: Row(
         children: [
-          Icon(Icons.gps_fixed, color: lat != null ? AppColors.accent : AppColors.textSecondary, size: 20),
+          Icon(Icons.gps_fixed,
+              color: lat != null ? AppColors.accent : AppColors.textSecondary,
+              size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: lat != null
-                ? Text('${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}', style: AppTextStyles.bodyMedium.copyWith(color: AppColors.accent))
-                : Text('Tap to capture GPS location', style: AppTextStyles.bodyMedium),
+                ? Text(
+                    '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(color: AppColors.accent),
+                  )
+                : Text('Tap to capture GPS location',
+                    style: AppTextStyles.bodyMedium),
           ),
           isLocating
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent))
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppColors.accent),
+                )
               : TextButton(
                   onPressed: onCapture,
-                  child: Text(lat != null ? 'Recapture' : 'Capture', style: AppTextStyles.titleMedium.copyWith(color: AppColors.accent)),
+                  child: Text(
+                    lat != null ? 'Recapture' : 'Capture',
+                    style: AppTextStyles.titleMedium
+                        .copyWith(color: AppColors.accent),
+                  ),
                 ),
         ],
       ),

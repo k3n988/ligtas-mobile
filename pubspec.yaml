@@ -36,9 +36,6 @@ dependencies:
   # Mesh / BLE (wire up later, declare now)
   flutter_blue_plus: ^1.32.12
 
-  # SMS reading (Android)
-  another_telephony: 0.4.1
-
   # Secure storage
   flutter_secure_storage: ^9.0.0
 

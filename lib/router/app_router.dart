@@ -77,12 +77,12 @@ class _AppShell extends StatelessWidget {
           NavigationDestination(
             icon: Icon(Icons.warning_amber_outlined),
             selectedIcon: Icon(Icons.warning_amber),
-            label: 'Triage',
+            label: 'Queue',
           ),
           NavigationDestination(
-            icon: Icon(Icons.send_outlined),
-            selectedIcon: Icon(Icons.send),
-            label: 'Dispatch',
+            icon: Icon(Icons.emergency_outlined),
+            selectedIcon: Icon(Icons.emergency),
+            label: 'Assets',
           ),
         ],
       ),

@@ -3,21 +3,33 @@ import '../core/models/household.dart';
 import '../core/models/asset.dart';
 import '../core/models/triage_level.dart';
 
-// ── Household list ────────────────────────────────────────────────────────────
+// ── Household ─────────────────────────────────────────────────────────────────
 
 class HouseholdNotifier extends StateNotifier<List<Household>> {
   HouseholdNotifier() : super(_seedHouseholds());
 
   void add(Household h) => state = [...state, h];
 
-  void markRescued(String id) {
-    state = [
-      for (final h in state)
-        if (h.id == id) h.copyWith(isRescued: true) else h,
-    ];
+  void markRescued(String id) => _update(id, (h) => h.copyWith(status: HouseholdStatus.rescued));
+
+  void restorePending(String id) => _update(
+        id,
+        (h) => h.copyWith(status: HouseholdStatus.pending, clearAssignment: true),
+      );
+
+  void dispatchRescue(String householdId, String assetId) {
+    _update(
+      householdId,
+      (h) => h.copyWith(
+        assignedAssetId: assetId,
+        dispatchedAt: DateTime.now(),
+      ),
+    );
   }
 
-  void remove(String id) => state = state.where((h) => h.id != id).toList();
+  void _update(String id, Household Function(Household) fn) {
+    state = [for (final h in state) if (h.id == id) fn(h) else h];
+  }
 }
 
 final householdProvider =
@@ -25,7 +37,7 @@ final householdProvider =
   (ref) => HouseholdNotifier(),
 );
 
-/// Sorted queue: unrescued first, ordered by triage priority then registration time.
+/// Sorted queue: pending first, CRITICAL→STABLE, then rescued at bottom.
 final queueProvider = Provider<List<Household>>((ref) {
   final all = ref.watch(householdProvider);
   final pending = all.where((h) => !h.isRescued).toList()
@@ -33,19 +45,21 @@ final queueProvider = Provider<List<Household>>((ref) {
       final p = a.triageLevel.priority.compareTo(b.triageLevel.priority);
       return p != 0 ? p : a.registeredAt.compareTo(b.registeredAt);
     });
-  return pending;
+  final rescued = all.where((h) => h.isRescued).toList();
+  return [...pending, ...rescued];
 });
 
-// ── Asset list ────────────────────────────────────────────────────────────────
+// ── Locate (pan map to household) ─────────────────────────────────────────────
+
+final locateHouseholdProvider = StateProvider<String?>((ref) => null);
+
+// ── Asset ─────────────────────────────────────────────────────────────────────
 
 class AssetNotifier extends StateNotifier<List<Asset>> {
   AssetNotifier() : super(_seedAssets());
 
   void updateStatus(String id, AssetStatus status) {
-    state = [
-      for (final a in state)
-        if (a.id == id) a.copyWith(status: status) else a,
-    ];
+    state = [for (final a in state) if (a.id == id) a.copyWith(status: status) else a];
   }
 }
 
@@ -59,79 +73,94 @@ List<Household> _seedHouseholds() {
   final now = DateTime.now();
   return [
     Household(
-      id: 'h1',
-      headName: 'Maria Santos',
-      barangay: 'Brgy. 176',
-      memberCount: 6,
-      elderlyCount: 1,
-      infantCount: 1,
-      medicalCount: 2,
-      hasDisabled: false,
-      damageLevel: 2,
-      latitude: 14.6090,
-      longitude: 120.9890,
+      id: 'HH-MOCK1',
+      latitude: 10.6765,
+      longitude: 122.9509,
+      city: 'Bacolod City',
+      barangay: 'Taculing',
+      purok: 'Purok 3',
+      street: 'Rizal St.',
+      structure: StructureType.lightMaterials,
+      head: 'Maria Santos',
+      contact: '09171234567',
+      occupants: 6,
+      vulnerabilities: [Vulnerability.bedridden, Vulnerability.oxygen],
+      notes: 'Second house from the corner',
+      status: HouseholdStatus.pending,
       triageLevel: TriageLevel.critical,
-      registeredAt: now.subtract(const Duration(minutes: 45)),
+      registeredAt: now.subtract(const Duration(minutes: 55)),
     ),
     Household(
-      id: 'h2',
-      headName: 'Juan dela Cruz',
-      barangay: 'Brgy. 201',
-      memberCount: 4,
-      elderlyCount: 0,
-      infantCount: 1,
-      medicalCount: 1,
-      hasDisabled: false,
-      damageLevel: 1,
-      latitude: 14.5980,
-      longitude: 120.9810,
+      id: 'HH-MOCK2',
+      latitude: 10.6720,
+      longitude: 122.9470,
+      city: 'Bacolod City',
+      barangay: 'Mandalagan',
+      purok: 'Purok 1',
+      street: 'Magsaysay Ave.',
+      structure: StructureType.singleStory,
+      head: 'Juan dela Cruz',
+      contact: '09281234567',
+      occupants: 4,
+      vulnerabilities: [Vulnerability.senior, Vulnerability.wheelchair],
+      notes: '',
+      status: HouseholdStatus.pending,
       triageLevel: TriageLevel.high,
-      registeredAt: now.subtract(const Duration(minutes: 30)),
+      registeredAt: now.subtract(const Duration(minutes: 40)),
     ),
     Household(
-      id: 'h3',
-      headName: 'Rosa Reyes',
-      barangay: 'Brgy. 145',
-      memberCount: 5,
-      elderlyCount: 2,
-      infantCount: 0,
-      medicalCount: 0,
-      hasDisabled: false,
-      damageLevel: 1,
-      latitude: 14.6010,
-      longitude: 120.9860,
+      id: 'HH-MOCK3',
+      latitude: 10.6700,
+      longitude: 122.9530,
+      city: 'Bacolod City',
+      barangay: 'Villamonte',
+      purok: 'Purok 5',
+      street: 'Lopez Jaena St.',
+      structure: StructureType.singleStory,
+      head: 'Rosa Reyes',
+      contact: '09351234567',
+      occupants: 5,
+      vulnerabilities: [Vulnerability.pregnant, Vulnerability.infant],
+      notes: 'Near the church',
+      status: HouseholdStatus.pending,
       triageLevel: TriageLevel.elevated,
-      registeredAt: now.subtract(const Duration(minutes: 20)),
+      registeredAt: now.subtract(const Duration(minutes: 25)),
     ),
     Household(
-      id: 'h4',
-      headName: 'Pedro Lim',
-      barangay: 'Brgy. 090',
-      memberCount: 3,
-      elderlyCount: 0,
-      infantCount: 0,
-      medicalCount: 0,
-      hasDisabled: false,
-      damageLevel: 0,
-      latitude: 14.5950,
-      longitude: 120.9870,
+      id: 'HH-MOCK4',
+      latitude: 10.6680,
+      longitude: 122.9490,
+      city: 'Talisay City',
+      barangay: 'Matab-ang',
+      purok: 'Purok 2',
+      street: 'National Highway',
+      structure: StructureType.multiStory,
+      head: 'Pedro Lim',
+      contact: '09091234567',
+      occupants: 3,
+      vulnerabilities: [],
+      notes: '',
+      status: HouseholdStatus.pending,
       triageLevel: TriageLevel.stable,
       registeredAt: now.subtract(const Duration(minutes: 10)),
     ),
     Household(
-      id: 'h5',
-      headName: 'Ana Villanueva',
-      barangay: 'Brgy. 176',
-      memberCount: 8,
-      elderlyCount: 2,
-      infantCount: 2,
-      medicalCount: 3,
-      hasDisabled: true,
-      damageLevel: 3,
-      latitude: 14.6070,
-      longitude: 120.9920,
+      id: 'HH-MOCK5',
+      latitude: 10.6790,
+      longitude: 122.9550,
+      city: 'Bacolod City',
+      barangay: 'Bata',
+      purok: 'Purok 4',
+      street: 'Burgos St.',
+      structure: StructureType.lightMaterials,
+      head: 'Ana Villanueva',
+      contact: '09501234567',
+      occupants: 8,
+      vulnerabilities: [Vulnerability.dialysis, Vulnerability.senior],
+      notes: 'Flood-prone area',
+      status: HouseholdStatus.pending,
       triageLevel: TriageLevel.critical,
-      registeredAt: now.subtract(const Duration(minutes: 55)),
+      registeredAt: now.subtract(const Duration(minutes: 60)),
     ),
   ];
 }
@@ -139,50 +168,59 @@ List<Household> _seedHouseholds() {
 List<Asset> _seedAssets() {
   return [
     const Asset(
-      id: 'a1',
-      name: 'RB-Alpha',
-      type: AssetType.boat,
-      location: 'Staging Area North',
+      id: 'A-001',
+      name: 'Marine-1',
+      type: 'Boat',
+      unit: 'BFP Marine',
+      status: AssetStatus.dispatching,
+      latitude: 10.6750,
+      longitude: 122.9480,
+      icon: '🚤',
       capacity: 12,
-      status: AssetStatus.deployed,
-      latitude: 14.6050,
-      longitude: 120.9830,
     ),
     const Asset(
-      id: 'a2',
-      name: 'RB-Bravo',
-      type: AssetType.boat,
-      location: 'Staging Area South',
+      id: 'A-002',
+      name: 'Marine-2',
+      type: 'Boat',
+      unit: 'BFP Marine',
+      status: AssetStatus.active,
+      latitude: 10.6710,
+      longitude: 122.9460,
+      icon: '🚤',
       capacity: 10,
-      status: AssetStatus.available,
-      latitude: 14.5960,
-      longitude: 120.9850,
     ),
     const Asset(
-      id: 'a3',
-      name: 'Truck-01',
-      type: AssetType.truck,
-      location: 'City Hall Hub',
+      id: 'A-003',
+      name: 'Truck-303',
+      type: 'Truck',
+      unit: 'Army 303rd',
+      status: AssetStatus.active,
+      latitude: 10.6760,
+      longitude: 122.9500,
+      icon: '🛻',
       capacity: 20,
-      status: AssetStatus.available,
-      latitude: 14.5995,
-      longitude: 120.9842,
     ),
     const Asset(
-      id: 'a4',
-      name: 'Heli-1',
-      type: AssetType.helicopter,
-      location: 'Airport',
-      capacity: 6,
-      status: AssetStatus.maintenance,
+      id: 'A-004',
+      name: 'Ambulance-1',
+      type: 'Ambulance',
+      unit: 'Red Cross',
+      status: AssetStatus.standby,
+      latitude: 10.6730,
+      longitude: 122.9520,
+      icon: '🚑',
+      capacity: 4,
     ),
     const Asset(
-      id: 'a5',
-      name: 'Med-Team A',
-      type: AssetType.medicalTeam,
-      location: 'District Hospital',
-      capacity: 30,
-      status: AssetStatus.deployed,
+      id: 'A-005',
+      name: 'Truck-Army2',
+      type: 'Truck',
+      unit: 'Army 303rd',
+      status: AssetStatus.standby,
+      latitude: 10.6745,
+      longitude: 122.9535,
+      icon: '🛻',
+      capacity: 20,
     ),
   ];
 }

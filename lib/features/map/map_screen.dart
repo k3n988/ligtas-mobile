@@ -1,33 +1,86 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
+import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
 import 'map_controller.dart';
+import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
 
 const _initialCamera = CameraPosition(
-  target: LatLng(14.5995, 120.9842),
+  target: LatLng(10.6765, 122.9509),
   zoom: 13.5,
 );
 
-class MapScreen extends ConsumerWidget {
+class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final households = ref.watch(householdProvider);
-    final ctrl = ref.watch(mapControllerProvider.notifier);
-    final state = ref.watch(mapControllerProvider);
+  ConsumerState<MapScreen> createState() => _MapScreenState();
+}
 
-    final markers = buildHouseholdMarkers(
+class _MapScreenState extends ConsumerState<MapScreen> {
+  Set<Marker> _markers = {};
+  List<Household> _lastHouseholds = [];
+  bool _iconsPreloaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _preload();
+  }
+
+  Future<void> _preload() async {
+    await preloadMarkerIcons();
+    if (mounted) setState(() => _iconsPreloaded = true);
+  }
+
+  Future<void> _rebuildMarkers(
+    List<Household> households,
+    List<Asset> assets,
+    MapControllerNotifier ctrl,
+  ) async {
+    final householdMarkers = await buildHouseholdMarkersAsync(
       households: households,
-      onTap: (h) => ctrl.selectHousehold(h),
+      onTap: (h) => ctrl.selectHousehold(h, assets: assets),
     );
+    final assetMarkers = buildAssetMarkers(assets);
+    if (mounted) {
+      setState(() => _markers = {...householdMarkers, ...assetMarkers});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final households = ref.watch(householdProvider);
+    final assets    = ref.watch(assetProvider);
+    final ctrl      = ref.watch(mapControllerProvider.notifier);
+    final state     = ref.watch(mapControllerProvider);
+
+    // Rebuild markers when households change or icons first load
+    if (_iconsPreloaded && households != _lastHouseholds) {
+      _lastHouseholds = households;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _rebuildMarkers(households, assets, ctrl);
+      });
+    }
+
+    // Pan to household when "Locate" tapped from Queue / Assets
+    ref.listen(locateHouseholdProvider, (_, id) {
+      if (id == null) return;
+      try {
+        final h = households.firstWhere((h) => h.id == id);
+        ctrl.selectHousehold(h, assets: assets);
+      } catch (_) {}
+      ref.read(locateHouseholdProvider.notifier).state = null;
+    });
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -38,7 +91,12 @@ class MapScreen extends ConsumerWidget {
           GoogleMap(
             initialCameraPosition: _initialCamera,
             onMapCreated: ctrl.onMapCreated,
-            markers: markers,
+            onCameraMove: ctrl.onCameraMove,
+            markers: _markers,
+            polylines: state.polylines,
+            mapType: state.mapType,
+            style: state.is3D ? null : _cleanMapStyle,
+            myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             mapToolbarEnabled: false,
@@ -60,28 +118,37 @@ class MapScreen extends ConsumerWidget {
           Positioned(
             right: 12,
             top: MediaQuery.of(context).padding.top + 76,
-            child: _MapControls(
-              ctrl: ctrl,
-              is3D: state.is3D,
-            ),
+            child: _MapControls(ctrl: ctrl, is3D: state.is3D),
           ),
 
-          // ── Legend ────────────────────────────────────────────────────
-          const Positioned(
-            bottom: 16,
-            left: 0,
-            right: 0,
-            child: Center(child: LegendWidget()),
-          ),
-
-          // ── Selected household panel ──────────────────────────────────
-          if (state.selected != null)
+          // ── Stats overlay ─────────────────────────────────────────────
+          if (state.selected == null)
             Positioned(
               bottom: 70,
-              left: 16,
-              right: 16,
+              left: 12,
+              child: _StatsOverlay(households: households),
+            ),
+
+          // ── Legend ────────────────────────────────────────────────────
+          if (state.selected == null)
+            const Positioned(
+              bottom: 16,
+              left: 0,
+              right: 0,
+              child: Center(child: LegendWidget()),
+            ),
+
+          // ── Household overlay panel (shown on pin tap) ────────────────
+          if (state.selected != null)
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 16,
               child: _HouseholdPanel(
                 household: state.selected!,
+                nearestAsset: state.nearestAsset,
+                routeMeters: state.routeDistanceMeters,
+                isRouting: state.isRouting,
                 onClose: () => ctrl.selectHousehold(null),
                 onRescue: () {
                   ref
@@ -97,12 +164,299 @@ class MapScreen extends ConsumerWidget {
   }
 }
 
+// ── Household overlay panel ───────────────────────────────────────────────────
+
+class _HouseholdPanel extends StatelessWidget {
+  final Household household;
+  final Asset? nearestAsset;
+  final double? routeMeters;
+  final bool isRouting;
+  final VoidCallback onClose;
+  final VoidCallback onRescue;
+
+  const _HouseholdPanel({
+    required this.household,
+    required this.nearestAsset,
+    required this.routeMeters,
+    required this.isRouting,
+    required this.onClose,
+    required this.onRescue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final h = household;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Triage color bar + header ─────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
+            decoration: BoxDecoration(
+              color: (h.isRescued
+                      ? const Color(0xFF238636)
+                      : h.triageLevel.color)
+                  .withValues(alpha: 0.12),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                TriageBadge(level: h.triageLevel),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    h.head,
+                    style: AppTextStyles.titleLarge.copyWith(
+                      color: h.isRescued
+                          ? const Color(0xFF238636)
+                          : h.triageLevel.color,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: onClose,
+                  child: const Icon(Icons.close,
+                      color: AppColors.textSecondary, size: 20),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Info rows ─────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _row('ID:', h.id),
+                _row(
+                  'Loc:',
+                  '${h.barangay}, ${h.city}'
+                  '${h.purok.isNotEmpty ? ' · Purok ${h.purok}' : ''}'
+                  '${h.street.isNotEmpty ? '\n${h.street}' : ''}',
+                ),
+                _row(
+                  'Occupants: ${h.occupants}',
+                  '  |  Structure: ${h.structure.name}',
+                  plain: true,
+                ),
+                if (h.contact.isNotEmpty) _row('Contact:', h.contact),
+                if (h.notes.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Notes:  ',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                                color: AppColors.textSecondary)),
+                        Expanded(
+                          child: Text(
+                            h.notes,
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color: AppColors.textSecondary,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // ── Routing row ───────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+            child: isRouting
+                ? const Row(
+                    children: [
+                      SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF1A73E8)),
+                      ),
+                      SizedBox(width: 8),
+                      Text('Finding nearest rescuer…',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary)),
+                    ],
+                  )
+                : nearestAsset != null
+                    ? Row(
+                        children: [
+                          Text(nearestAsset!.icon,
+                              style: const TextStyle(fontSize: 15)),
+                          const SizedBox(width: 6),
+                          Text('Routing from: ',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                  color: AppColors.textSecondary)),
+                          Expanded(
+                            child: Text(
+                              nearestAsset!.name,
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                  color: const Color(0xFF1A73E8),
+                                  fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (routeMeters != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1A73E8)
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                formatDistance(routeMeters!),
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF1A73E8)),
+                              ),
+                            ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
+          ),
+
+          // ── Vulnerability chips ───────────────────────────────────────
+          if (h.vulnerabilities.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: h.vulnerabilities.map((v) => _vulnChip(v)).toList(),
+              ),
+            )
+          else
+            const SizedBox(height: 4),
+
+          // ── Rescue button ─────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: h.isRescued
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color:
+                          const Color(0xFF238636).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '✓  Rescued',
+                      style: AppTextStyles.titleMedium
+                          .copyWith(color: const Color(0xFF238636)),
+                    ),
+                  )
+                : SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: onRescue,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.stable,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Text(
+                        'MARK AS RESCUED',
+                        style: AppTextStyles.titleMedium.copyWith(
+                            color: Colors.white,
+                            letterSpacing: 0.5),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value, {bool plain = false}) {
+    if (plain) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          '$label$value',
+          style: AppTextStyles.bodyMedium
+              .copyWith(color: AppColors.textSecondary),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label  ',
+              style: AppTextStyles.bodyMedium
+                  .copyWith(color: AppColors.textSecondary)),
+          Expanded(
+            child: Text(value,
+                style: AppTextStyles.bodyMedium
+                    .copyWith(color: AppColors.textPrimary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _vulnChip(Vulnerability v) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: v.triggersLevel.color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border:
+            Border.all(color: v.triggersLevel.color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(v.icon, size: 11, color: v.triggersLevel.color),
+          const SizedBox(width: 4),
+          Text(v.label,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: v.triggersLevel.color,
+                  fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Search bar ────────────────────────────────────────────────────────────────
 
 class _SearchBar extends StatefulWidget {
   final MapControllerNotifier ctrl;
   final bool isSearching;
-
   const _SearchBar({required this.ctrl, required this.isSearching});
 
   @override
@@ -171,7 +525,8 @@ class _SearchBarState extends State<_SearchBar> {
               child: SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1A73E8)),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Color(0xFF1A73E8)),
               ),
             )
           else
@@ -201,28 +556,17 @@ class _SearchBarState extends State<_SearchBar> {
 class _MapControls extends StatelessWidget {
   final MapControllerNotifier ctrl;
   final bool is3D;
-
   const _MapControls({required this.ctrl, required this.is3D});
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Zoom in
-        _ControlButton(
-          icon: Icons.add,
-          onTap: ctrl.zoomIn,
-          topRadius: true,
-        ),
+        _ControlButton(icon: Icons.add, onTap: ctrl.zoomIn, topRadius: true),
         const SizedBox(height: 1),
-        // Zoom out
         _ControlButton(
-          icon: Icons.remove,
-          onTap: ctrl.zoomOut,
-          bottomRadius: true,
-        ),
+            icon: Icons.remove, onTap: ctrl.zoomOut, bottomRadius: true),
         const SizedBox(height: 10),
-        // Reset bearing / compass
         _ControlButton(
           icon: Icons.explore_outlined,
           onTap: ctrl.resetBearing,
@@ -230,10 +574,9 @@ class _MapControls extends StatelessWidget {
           bottomRadius: true,
         ),
         const SizedBox(height: 10),
-        // 3D toggle
         _ControlButton(
-          icon: Icons.view_in_ar_outlined,
-          label: is3D ? '2D' : '3D',
+          icon: is3D ? Icons.map_outlined : Icons.satellite_alt_outlined,
+          label: is3D ? 'MAP' : 'SAT',
           onTap: ctrl.toggle3D,
           active: is3D,
           topRadius: true,
@@ -274,7 +617,8 @@ class _ControlButton extends StatelessWidget {
             topLeft: topRadius ? const Radius.circular(8) : Radius.zero,
             topRight: topRadius ? const Radius.circular(8) : Radius.zero,
             bottomLeft: bottomRadius ? const Radius.circular(8) : Radius.zero,
-            bottomRight: bottomRadius ? const Radius.circular(8) : Radius.zero,
+            bottomRight:
+                bottomRadius ? const Radius.circular(8) : Radius.zero,
           ),
           boxShadow: [
             BoxShadow(
@@ -286,119 +630,92 @@ class _ControlButton extends StatelessWidget {
         ),
         child: label != null
             ? Center(
-                child: Text(
-                  label!,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: active ? Colors.white : Colors.black87,
-                  ),
-                ),
+                child: Text(label!,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            active ? Colors.white : Colors.black87)),
               )
-            : Icon(icon, size: 20, color: active ? Colors.white : Colors.black87),
+            : Icon(icon,
+                size: 20,
+                color: active ? Colors.white : Colors.black87),
       ),
     );
   }
 }
 
-// ── Household detail panel ────────────────────────────────────────────────────
+// ── Stats overlay ─────────────────────────────────────────────────────────────
 
-class _HouseholdPanel extends StatelessWidget {
-  final Household household;
-  final VoidCallback onClose;
-  final VoidCallback onRescue;
-
-  const _HouseholdPanel({
-    required this.household,
-    required this.onClose,
-    required this.onRescue,
-  });
+class _StatsOverlay extends StatelessWidget {
+  final List<Household> households;
+  const _StatsOverlay({required this.households});
 
   @override
   Widget build(BuildContext context) {
-    final h = household;
+    final critical = households
+        .where((h) => !h.isRescued && h.triageLevel == TriageLevel.critical)
+        .length;
+    final high = households
+        .where((h) => !h.isRescued && h.triageLevel == TriageLevel.high)
+        .length;
+    final elevated = households
+        .where((h) => !h.isRescued && h.triageLevel == TriageLevel.elevated)
+        .length;
+    final rescued = households.where((h) => h.isRescued).length;
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
+        color: AppColors.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.divider),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 20,
-          ),
+              color: Colors.black.withValues(alpha: 0.2), blurRadius: 8),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              TriageBadge(level: h.triageLevel),
-              const SizedBox(width: 10),
-              Expanded(child: Text(h.headName, style: AppTextStyles.titleLarge)),
-              IconButton(
-                onPressed: onClose,
-                icon: const Icon(Icons.close,
-                    color: AppColors.textSecondary, size: 20),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(h.barangay, style: AppTextStyles.bodyMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            children: [
-              _chip(Icons.group, '${h.memberCount} members'),
-              if (h.elderlyCount > 0)
-                _chip(Icons.elderly, '${h.elderlyCount} elderly'),
-              if (h.infantCount > 0)
-                _chip(Icons.child_care, '${h.infantCount} infant'),
-              if (h.medicalCount > 0)
-                _chip(Icons.medical_services, '${h.medicalCount} medical'),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (!h.isRescued)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: onRescue,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.stable,
-                ),
-                icon: const Icon(Icons.check_circle, color: Colors.white),
-                label: Text(
-                  'Mark Rescued',
-                  style: AppTextStyles.titleMedium.copyWith(color: Colors.white),
-                ),
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              alignment: Alignment.center,
-              child: Text(
-                '✓ Rescued',
-                style: AppTextStyles.titleMedium.copyWith(color: AppColors.stable),
-              ),
-            ),
+          _statDot(AppColors.critical, critical, 'Critical'),
+          const SizedBox(width: 12),
+          _statDot(AppColors.high, high, 'High'),
+          const SizedBox(width: 12),
+          _statDot(AppColors.elevated, elevated, 'Elevated'),
+          const SizedBox(width: 12),
+          _statDot(AppColors.stable, rescued, 'Rescued'),
         ],
       ),
     );
   }
 
-  Widget _chip(IconData icon, String label) {
-    return Row(
+  Widget _statDot(Color color, int count, String label) {
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: AppColors.textSecondary),
-        const SizedBox(width: 4),
-        Text(label, style: AppTextStyles.bodyMedium),
+        Text('$count',
+            style: AppTextStyles.headlineMedium
+                .copyWith(color: color, fontSize: 18)),
+        Text(label, style: AppTextStyles.labelSmall),
       ],
     );
   }
 }
+
+// ── Map style: hides all POI pins ─────────────────────────────────────────────
+
+const String _cleanMapStyle = '''
+[
+  { "featureType": "poi",            "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.business",   "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.attraction", "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.government", "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.medical",    "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.park",       "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.place_of_worship", "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.school",     "stylers": [{ "visibility": "off" }] },
+  { "featureType": "poi.sports_complex", "stylers": [{ "visibility": "off" }] },
+  { "featureType": "transit",        "stylers": [{ "visibility": "off" }] }
+]
+''';

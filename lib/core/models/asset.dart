@@ -1,46 +1,13 @@
 import 'package:equatable/equatable.dart';
 
-enum AssetType { boat, truck, helicopter, medicalTeam }
-
-extension AssetTypeX on AssetType {
-  String get label {
-    switch (this) {
-      case AssetType.boat:
-        return 'Rescue Boat';
-      case AssetType.truck:
-        return 'Relief Truck';
-      case AssetType.helicopter:
-        return 'Helicopter';
-      case AssetType.medicalTeam:
-        return 'Medical Team';
-    }
-  }
-
-  String get icon {
-    switch (this) {
-      case AssetType.boat:
-        return '⛵';
-      case AssetType.truck:
-        return '🚛';
-      case AssetType.helicopter:
-        return '🚁';
-      case AssetType.medicalTeam:
-        return '🏥';
-    }
-  }
-}
-
-enum AssetStatus { available, deployed, maintenance }
+enum AssetStatus { active, dispatching, standby }
 
 extension AssetStatusX on AssetStatus {
   String get label {
     switch (this) {
-      case AssetStatus.available:
-        return 'Available';
-      case AssetStatus.deployed:
-        return 'Deployed';
-      case AssetStatus.maintenance:
-        return 'Maintenance';
+      case AssetStatus.active:      return 'Active';
+      case AssetStatus.dispatching: return 'Dispatching';
+      case AssetStatus.standby:     return 'Standby';
     }
   }
 }
@@ -48,47 +15,54 @@ extension AssetStatusX on AssetStatus {
 class Asset extends Equatable {
   final String id;
   final String name;
-  final AssetType type;
-  final String location;
-  final int capacity;
+  final String type;   // "Boat" | "Truck" | "Ambulance"
+  final String unit;   // "BFP Marine" | "Army 303rd" | "Red Cross"
   final AssetStatus status;
-  final double? latitude;
-  final double? longitude;
+  final double latitude;
+  final double longitude;
+  final String icon;   // emoji
+  final int capacity;
 
   const Asset({
     required this.id,
     required this.name,
     required this.type,
-    required this.location,
-    required this.capacity,
+    required this.unit,
     required this.status,
-    this.latitude,
-    this.longitude,
+    required this.latitude,
+    required this.longitude,
+    required this.icon,
+    required this.capacity,
   });
+
+  bool get isAvailable =>
+      status == AssetStatus.active || status == AssetStatus.standby;
 
   Asset copyWith({
     String? id,
     String? name,
-    AssetType? type,
-    String? location,
-    int? capacity,
+    String? type,
+    String? unit,
     AssetStatus? status,
     double? latitude,
     double? longitude,
+    String? icon,
+    int? capacity,
   }) {
     return Asset(
       id: id ?? this.id,
       name: name ?? this.name,
       type: type ?? this.type,
-      location: location ?? this.location,
-      capacity: capacity ?? this.capacity,
+      unit: unit ?? this.unit,
       status: status ?? this.status,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
+      icon: icon ?? this.icon,
+      capacity: capacity ?? this.capacity,
     );
   }
 
   @override
   List<Object?> get props =>
-      [id, name, type, location, capacity, status, latitude, longitude];
+      [id, name, type, unit, status, latitude, longitude, icon, capacity];
 }
