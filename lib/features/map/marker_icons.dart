@@ -60,5 +60,51 @@ Future<void> preloadMarkerIcons() async {
     circularMarker(const Color(0xFFF1C40F)), // elevated
     circularMarker(const Color(0xFF58A6FF)), // stable
     circularMarker(const Color(0xFF238636)), // rescued
+    pendingPinIcon(),                        // map-pick preview
   ]);
+}
+
+/// Dashed blue ring with filled center — used for the "pick on map" preview pin.
+Future<BitmapDescriptor> pendingPinIcon({double size = 52}) async {
+  const key = '__pending__';
+  if (_cache.containsKey(key)) return _cache[key]!;
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  final r = size / 2;
+
+  // Outer dashed ring (approximated with arcs)
+  final dashPaint = Paint()
+    ..color = const Color(0xFF58A6FF)
+    ..strokeWidth = 3
+    ..style = PaintingStyle.stroke;
+
+  const dashCount = 8;
+  const gapFraction = 0.4;
+  const twoPi = 6.2832;
+  final dashArc = twoPi / dashCount * (1 - gapFraction);
+  final gapArc  = twoPi / dashCount * gapFraction;
+  double angle = 0;
+  for (int i = 0; i < dashCount; i++) {
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(r, r), radius: r - 4),
+      angle, dashArc, false, dashPaint,
+    );
+    angle += dashArc + gapArc;
+  }
+
+  // Inner filled dot
+  canvas.drawCircle(
+    Offset(r, r),
+    r * 0.32,
+    Paint()..color = const Color(0xFF58A6FF),
+  );
+
+  final picture = recorder.endRecording();
+  final img = await picture.toImage(size.toInt(), size.toInt());
+  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+
+  final desc = BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
+  _cache[key] = desc;
+  return desc;
 }

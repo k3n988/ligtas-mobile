@@ -9,10 +9,12 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
+import '../../providers/hazard_provider.dart';
 import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
+import 'hazard_overlay.dart';
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),

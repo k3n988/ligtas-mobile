@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/data/lgu_data.dart';
 import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
@@ -8,6 +9,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import 'registration_provider.dart';
 import 'triage_preview.dart';
+import 'map_picker_sheet.dart';
 
 class RegistrationScreen extends ConsumerWidget {
   const RegistrationScreen({super.key});
@@ -89,6 +91,8 @@ class RegistrationScreen extends ConsumerWidget {
               lng: state.longitude,
               isLocating: state.isLocating,
               onCapture: notifier.captureLocation,
+              onPinned: (lat, lng) => notifier.setField(
+                  (s) => s.copyWith(latitude: lat, longitude: lng)),
             ),
             const SizedBox(height: 20),
 
@@ -479,55 +483,102 @@ class _LocationTile extends StatelessWidget {
   final double? lng;
   final bool isLocating;
   final Future<void> Function() onCapture;
+  final void Function(double lat, double lng) onPinned;
 
-  const _LocationTile(
-      {required this.lat,
-      required this.lng,
-      required this.isLocating,
-      required this.onCapture});
+  const _LocationTile({
+    required this.lat,
+    required this.lng,
+    required this.isLocating,
+    required this.onCapture,
+    required this.onPinned,
+  });
+
+  Future<void> _openMapPicker(BuildContext context) async {
+    final result = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => MapPickerSheet(
+          initial: lat != null ? LatLng(lat!, lng!) : null,
+        ),
+      ),
+    );
+    if (result != null) {
+      onPinned(result.latitude, result.longitude);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.gps_fixed,
-              color: lat != null ? AppColors.accent : AppColors.textSecondary,
-              size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: lat != null
-                ? Text(
-                    '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}',
-                    style: AppTextStyles.bodyMedium
-                        .copyWith(color: AppColors.accent),
-                  )
-                : Text('Tap to capture GPS location',
-                    style: AppTextStyles.bodyMedium),
+    final hasCoords = lat != null;
+
+    return Column(
+      children: [
+        // ── Coords display + GPS button ──────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.divider),
           ),
-          isLocating
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: AppColors.accent),
-                )
-              : TextButton(
-                  onPressed: onCapture,
-                  child: Text(
-                    lat != null ? 'Recapture' : 'Capture',
-                    style: AppTextStyles.titleMedium
-                        .copyWith(color: AppColors.accent),
-                  ),
-                ),
-        ],
-      ),
+          child: Row(
+            children: [
+              Icon(
+                hasCoords ? Icons.location_on : Icons.gps_off,
+                color: hasCoords ? AppColors.accent : AppColors.textSecondary,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: hasCoords
+                    ? Text(
+                        '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}',
+                        style: AppTextStyles.bodyMedium
+                            .copyWith(color: AppColors.accent),
+                      )
+                    : Text('No location set yet',
+                        style: AppTextStyles.bodyMedium),
+              ),
+              isLocating
+                  ? const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.accent),
+                    )
+                  : TextButton(
+                      onPressed: onCapture,
+                      child: Text(
+                        hasCoords ? 'GPS' : 'GPS',
+                        style: AppTextStyles.titleMedium
+                            .copyWith(color: AppColors.accent),
+                      ),
+                    ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // ── Pin on Map button ────────────────────────────────────────────
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              side: const BorderSide(color: AppColors.accent),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.map_outlined, size: 18),
+            label: Text(
+              hasCoords ? 'Repin on Map' : 'Pin Location on Map',
+              style: AppTextStyles.titleMedium
+                  .copyWith(color: AppColors.accent),
+            ),
+            onPressed: () => _openMapPicker(context),
+          ),
+        ),
+      ],
     );
   }
 }

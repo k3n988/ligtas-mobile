@@ -70,3 +70,35 @@ String formatDistance(double metres) {
   if (metres < 1000) return '${metres.round()} m';
   return '${(metres / 1000).toStringAsFixed(1)} km';
 }
+
+// ── Point-in-polygon (ray casting) ───────────────────────────────────────────
+
+/// Returns true if [point] lies inside [polygon].
+/// Uses the ray-casting algorithm — works for any simple polygon.
+bool isPointInPolygon(LatLng point, List<LatLng> polygon) {
+  bool inside = false;
+  final n = polygon.length;
+  for (int i = 0, j = n - 1; i < n; j = i++) {
+    final xi = polygon[i].latitude,  yi = polygon[i].longitude;
+    final xj = polygon[j].latitude,  yj = polygon[j].longitude;
+    final intersect =
+        ((yi > point.longitude) != (yj > point.longitude)) &&
+        (point.latitude <
+            (xj - xi) * (point.longitude - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// ── Polygon centroid ──────────────────────────────────────────────────────────
+
+/// Returns the arithmetic centroid of [points] — good enough for marker placement.
+LatLng polygonCentroid(List<LatLng> points) {
+  assert(points.isNotEmpty);
+  double lat = 0, lng = 0;
+  for (final p in points) {
+    lat += p.latitude;
+    lng += p.longitude;
+  }
+  return LatLng(lat / points.length, lng / points.length);
+}
