@@ -56,6 +56,58 @@ class Household extends Equatable {
     this.dispatchedAt,
   });
 
+  // ── Supabase serialisation ──────────────────────────────────────────────────
+
+  factory Household.fromJson(Map<String, dynamic> j) => Household(
+        id:         j['id'] as String,
+        latitude:   (j['latitude']  as num).toDouble(),
+        longitude:  (j['longitude'] as num).toDouble(),
+        city:       j['city']      as String,
+        barangay:   j['barangay']  as String,
+        purok:      j['purok']     as String? ?? '',
+        street:     j['street']    as String? ?? '',
+        structure:  StructureType.values.firstWhere(
+            (e) => e.name == j['structure'], orElse: () => StructureType.singleStory),
+        head:       j['head']      as String,
+        contact:    j['contact']   as String? ?? '',
+        occupants:  j['occupants'] as int,
+        vulnerabilities: ((j['vulnerabilities'] as List?) ?? [])
+            .map((e) => Vulnerability.values.firstWhere(
+                (v) => v.name == e, orElse: () => Vulnerability.pwd))
+            .toList(),
+        notes:       j['notes']      as String? ?? '',
+        status:      HouseholdStatus.values.firstWhere(
+            (e) => e.name == j['status'], orElse: () => HouseholdStatus.pending),
+        triageLevel: TriageLevel.values.firstWhere(
+            (e) => e.name == j['triage_level'], orElse: () => TriageLevel.stable),
+        registeredAt:    DateTime.parse(j['registered_at'] as String),
+        assignedAssetId: j['assigned_asset_id'] as String?,
+        dispatchedAt:    j['dispatched_at'] != null
+            ? DateTime.parse(j['dispatched_at'] as String)
+            : null,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id':               id,
+        'latitude':         latitude,
+        'longitude':        longitude,
+        'city':             city,
+        'barangay':         barangay,
+        'purok':            purok,
+        'street':           street,
+        'structure':        structure.name,
+        'head':             head,
+        'contact':          contact,
+        'occupants':        occupants,
+        'vulnerabilities':  vulnerabilities.map((v) => v.name).toList(),
+        'notes':            notes,
+        'status':           status.name,
+        'triage_level':     triageLevel.name,
+        'registered_at':    registeredAt.toIso8601String(),
+        'assigned_asset_id': assignedAssetId,
+        'dispatched_at':    dispatchedAt?.toIso8601String(),
+      };
+
   bool get isRescued => status == HouseholdStatus.rescued;
   bool get isDispatched => assignedAssetId != null && status == HouseholdStatus.pending;
 

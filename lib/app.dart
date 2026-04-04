@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_colors.dart';
 import 'router/app_router.dart';
 
-class App extends StatelessWidget {
+class App extends ConsumerWidget {
   const App({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -16,7 +17,7 @@ class App extends StatelessWidget {
     return MaterialApp.router(
       title: 'L.I.G.T.A.S',
       debugShowCheckedModeBanner: false,
-      routerConfig: appRouter,
+      routerConfig: ref.watch(appRouterProvider),
       theme: _buildTheme(),
     );
   }

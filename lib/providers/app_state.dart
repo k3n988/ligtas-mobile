@@ -1,34 +1,83 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/models/household.dart';
 import '../core/models/asset.dart';
 import '../core/models/triage_level.dart';
 
+final _db = Supabase.instance.client;
+
 // ── Household ─────────────────────────────────────────────────────────────────
 
 class HouseholdNotifier extends StateNotifier<List<Household>> {
-  HouseholdNotifier() : super(_seedHouseholds());
-
-  void add(Household h) => state = [...state, h];
-
-  void markRescued(String id) => _update(id, (h) => h.copyWith(status: HouseholdStatus.rescued));
-
-  void restorePending(String id) => _update(
-        id,
-        (h) => h.copyWith(status: HouseholdStatus.pending, clearAssignment: true),
-      );
-
-  void dispatchRescue(String householdId, String assetId) {
-    _update(
-      householdId,
-      (h) => h.copyWith(
-        assignedAssetId: assetId,
-        dispatchedAt: DateTime.now(),
-      ),
-    );
+  HouseholdNotifier() : super([]) {
+    _init();
   }
 
-  void _update(String id, Household Function(Household) fn) {
-    state = [for (final h in state) if (h.id == id) fn(h) else h];
+  RealtimeChannel? _channel;
+
+  Future<void> _init() async {
+    await _fetch();
+
+    // Live updates — any INSERT/UPDATE/DELETE on the table refreshes the list
+    _channel = _db
+        .channel('public:households')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'households',
+          callback: (_) => _fetch(),
+        )
+        .subscribe();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final rows = await _db
+          .from('households')
+          .select()
+          .order('registered_at', ascending: true);
+      if (mounted) {
+        state = rows.map((r) => Household.fromJson(r)).toList();
+      }
+    } catch (_) {
+      // Keep current state on error (offline / table missing)
+    }
+  }
+
+  // ── Write-through ops ─────────────────────────────────────────────────────
+
+  Future<void> add(Household h) async {
+    await _db.from('households').insert(h.toJson());
+    // Realtime fires _fetch automatically
+  }
+
+  Future<void> markRescued(String id) async {
+    await _db
+        .from('households')
+        .update({'status': HouseholdStatus.rescued.name})
+        .eq('id', id);
+  }
+
+  Future<void> restorePending(String id) async {
+    await _db.from('households').update({
+      'status':           HouseholdStatus.pending.name,
+      'assigned_asset_id': null,
+      'dispatched_at':    null,
+    }).eq('id', id);
+  }
+
+  Future<void> dispatchRescue(String householdId, String assetId) async {
+    await _db.from('households').update({
+      'assigned_asset_id': assetId,
+      'dispatched_at':    DateTime.now().toIso8601String(),
+    }).eq('id', householdId);
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
   }
 }
 
@@ -37,7 +86,7 @@ final householdProvider =
   (ref) => HouseholdNotifier(),
 );
 
-/// Sorted queue: pending first, CRITICAL→STABLE, then rescued at bottom.
+/// Sorted queue: pending first (CRITICAL→STABLE), then rescued at bottom.
 final queueProvider = Provider<List<Household>>((ref) {
   final all = ref.watch(householdProvider);
   final pending = all.where((h) => !h.isRescued).toList()
@@ -56,171 +105,49 @@ final locateHouseholdProvider = StateProvider<String?>((ref) => null);
 // ── Asset ─────────────────────────────────────────────────────────────────────
 
 class AssetNotifier extends StateNotifier<List<Asset>> {
-  AssetNotifier() : super(_seedAssets());
+  AssetNotifier() : super([]) {
+    _init();
+  }
 
-  void updateStatus(String id, AssetStatus status) {
-    state = [for (final a in state) if (a.id == id) a.copyWith(status: status) else a];
+  RealtimeChannel? _channel;
+
+  Future<void> _init() async {
+    await _fetch();
+
+    _channel = _db
+        .channel('public:assets')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'assets',
+          callback: (_) => _fetch(),
+        )
+        .subscribe();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final rows = await _db.from('assets').select();
+      if (mounted) {
+        state = rows.map((r) => Asset.fromJson(r)).toList();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> updateStatus(String id, AssetStatus status) async {
+    await _db
+        .from('assets')
+        .update({'status': status.name})
+        .eq('id', id);
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
   }
 }
 
 final assetProvider = StateNotifierProvider<AssetNotifier, List<Asset>>(
   (ref) => AssetNotifier(),
 );
-
-// ── Seed data ─────────────────────────────────────────────────────────────────
-
-List<Household> _seedHouseholds() {
-  final now = DateTime.now();
-  return [
-    Household(
-      id: 'HH-MOCK1',
-      latitude: 10.6765,
-      longitude: 122.9509,
-      city: 'Bacolod City',
-      barangay: 'Taculing',
-      purok: 'Purok 3',
-      street: 'Rizal St.',
-      structure: StructureType.lightMaterials,
-      head: 'Maria Santos',
-      contact: '09171234567',
-      occupants: 6,
-      vulnerabilities: [Vulnerability.bedridden, Vulnerability.oxygen],
-      notes: 'Second house from the corner',
-      status: HouseholdStatus.pending,
-      triageLevel: TriageLevel.critical,
-      registeredAt: now.subtract(const Duration(minutes: 55)),
-    ),
-    Household(
-      id: 'HH-MOCK2',
-      latitude: 10.6720,
-      longitude: 122.9470,
-      city: 'Bacolod City',
-      barangay: 'Mandalagan',
-      purok: 'Purok 1',
-      street: 'Magsaysay Ave.',
-      structure: StructureType.singleStory,
-      head: 'Juan dela Cruz',
-      contact: '09281234567',
-      occupants: 4,
-      vulnerabilities: [Vulnerability.senior, Vulnerability.wheelchair],
-      notes: '',
-      status: HouseholdStatus.pending,
-      triageLevel: TriageLevel.high,
-      registeredAt: now.subtract(const Duration(minutes: 40)),
-    ),
-    Household(
-      id: 'HH-MOCK3',
-      latitude: 10.6700,
-      longitude: 122.9530,
-      city: 'Bacolod City',
-      barangay: 'Villamonte',
-      purok: 'Purok 5',
-      street: 'Lopez Jaena St.',
-      structure: StructureType.singleStory,
-      head: 'Rosa Reyes',
-      contact: '09351234567',
-      occupants: 5,
-      vulnerabilities: [Vulnerability.pregnant, Vulnerability.infant],
-      notes: 'Near the church',
-      status: HouseholdStatus.pending,
-      triageLevel: TriageLevel.elevated,
-      registeredAt: now.subtract(const Duration(minutes: 25)),
-    ),
-    Household(
-      id: 'HH-MOCK4',
-      latitude: 10.6680,
-      longitude: 122.9490,
-      city: 'Talisay City',
-      barangay: 'Matab-ang',
-      purok: 'Purok 2',
-      street: 'National Highway',
-      structure: StructureType.multiStory,
-      head: 'Pedro Lim',
-      contact: '09091234567',
-      occupants: 3,
-      vulnerabilities: [],
-      notes: '',
-      status: HouseholdStatus.pending,
-      triageLevel: TriageLevel.stable,
-      registeredAt: now.subtract(const Duration(minutes: 10)),
-    ),
-    Household(
-      id: 'HH-MOCK5',
-      latitude: 10.6790,
-      longitude: 122.9550,
-      city: 'Bacolod City',
-      barangay: 'Bata',
-      purok: 'Purok 4',
-      street: 'Burgos St.',
-      structure: StructureType.lightMaterials,
-      head: 'Ana Villanueva',
-      contact: '09501234567',
-      occupants: 8,
-      vulnerabilities: [Vulnerability.dialysis, Vulnerability.senior],
-      notes: 'Flood-prone area',
-      status: HouseholdStatus.pending,
-      triageLevel: TriageLevel.critical,
-      registeredAt: now.subtract(const Duration(minutes: 60)),
-    ),
-  ];
-}
-
-List<Asset> _seedAssets() {
-  return [
-    const Asset(
-      id: 'A-001',
-      name: 'Marine-1',
-      type: 'Boat',
-      unit: 'BFP Marine',
-      status: AssetStatus.dispatching,
-      latitude: 10.6750,
-      longitude: 122.9480,
-      icon: '🚤',
-      capacity: 12,
-    ),
-    const Asset(
-      id: 'A-002',
-      name: 'Marine-2',
-      type: 'Boat',
-      unit: 'BFP Marine',
-      status: AssetStatus.active,
-      latitude: 10.6710,
-      longitude: 122.9460,
-      icon: '🚤',
-      capacity: 10,
-    ),
-    const Asset(
-      id: 'A-003',
-      name: 'Truck-303',
-      type: 'Truck',
-      unit: 'Army 303rd',
-      status: AssetStatus.active,
-      latitude: 10.6760,
-      longitude: 122.9500,
-      icon: '🛻',
-      capacity: 20,
-    ),
-    const Asset(
-      id: 'A-004',
-      name: 'Ambulance-1',
-      type: 'Ambulance',
-      unit: 'Red Cross',
-      status: AssetStatus.standby,
-      latitude: 10.6730,
-      longitude: 122.9520,
-      icon: '🚑',
-      capacity: 4,
-    ),
-    const Asset(
-      id: 'A-005',
-      name: 'Truck-Army2',
-      type: 'Truck',
-      unit: 'Army 303rd',
-      status: AssetStatus.standby,
-      latitude: 10.6745,
-      longitude: 122.9535,
-      icon: '🛻',
-      capacity: 20,
-    ),
-  ];
-}

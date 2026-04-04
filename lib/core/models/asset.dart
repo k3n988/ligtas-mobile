@@ -35,6 +35,31 @@ class Asset extends Equatable {
     required this.capacity,
   });
 
+  factory Asset.fromJson(Map<String, dynamic> j) => Asset(
+        id:       j['id']       as String,
+        name:     j['name']     as String,
+        type:     j['type']     as String,
+        unit:     j['unit']     as String,
+        status:   AssetStatus.values.firstWhere(
+            (e) => e.name == j['status'], orElse: () => AssetStatus.standby),
+        latitude: (j['latitude']  as num).toDouble(),
+        longitude:(j['longitude'] as num).toDouble(),
+        icon:     j['icon']     as String,
+        capacity: j['capacity'] as int,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id':       id,
+        'name':     name,
+        'type':     type,
+        'unit':     unit,
+        'status':   status.name,
+        'latitude': latitude,
+        'longitude':longitude,
+        'icon':     icon,
+        'capacity': capacity,
+      };
+
   bool get isAvailable =>
       status == AssetStatus.active || status == AssetStatus.standby;
 
