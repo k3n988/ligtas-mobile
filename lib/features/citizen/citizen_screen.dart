@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -7,12 +9,15 @@ import '../../core/data/lgu_data.dart';
 import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_text_styles.dart';
+import '../../providers/app_state.dart';
 import '../auth/auth_provider.dart';
+import '../map/legend_widget.dart';
+import '../map/marker_icons.dart';
+import '../map/marker_layer.dart';
 
 final _db = Supabase.instance.client;
 
-// ── Citizen screen ────────────────────────────────────────────────────────────
+// ── Citizen screen ─────────────────────────────────────────────────────────────
 
 class CitizenScreen extends ConsumerStatefulWidget {
   const CitizenScreen({super.key});
@@ -22,15 +27,30 @@ class CitizenScreen extends ConsumerStatefulWidget {
 }
 
 class _CitizenScreenState extends ConsumerState<CitizenScreen> {
-  Household? _myHousehold;
-  bool _loading = true;
-  bool _showForm = false;
+  Household?       _myHousehold;
+  bool             _loading  = true;
+  bool             _showForm = false;
+  int              _tabIndex = 0;
+
+  // Realtime
+  RealtimeChannel? _channel;
+  String?          _prevApprovalStatus;
+  String?          _prevRescueStatus;
+  String?          _prevAssignedAssetId;
 
   @override
   void initState() {
     super.initState();
     _fetchMyHousehold();
   }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  // ── Data ───────────────────────────────────────────────────────────────────
 
   Future<void> _fetchMyHousehold() async {
     final username = ref.read(authProvider).username ?? '';
@@ -39,20 +59,257 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
           .from('households')
           .select()
           .eq('contact', username)
-          .eq('source', 'citizen')
           .limit(1);
-      if (rows.isNotEmpty && mounted) {
+      if (!mounted) return;
+      if (rows.isNotEmpty) {
+        final hh = Household.fromJson(rows.first);
         setState(() {
-          _myHousehold = Household.fromJson(rows.first);
-          _loading = false;
+          _myHousehold = hh;
+          _loading     = false;
         });
-      } else if (mounted) {
+        _subscribeRealtime(hh.id);
+      } else {
         setState(() => _loading = false);
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  // ── Realtime subscription ──────────────────────────────────────────────────
+
+  void _subscribeRealtime(String householdId) {
+    if (_channel != null) return; // already subscribed
+    _prevApprovalStatus  = _myHousehold?.approvalStatus;
+    _prevRescueStatus    = _myHousehold?.status.name;
+    _prevAssignedAssetId = _myHousehold?.assignedAssetId;
+
+    _channel = _db
+        .channel('citizen_hh_$householdId')
+        .onPostgresChanges(
+          event:    PostgresChangeEvent.update,
+          schema:   'public',
+          table:    'households',
+          filter:   PostgresChangeFilter(
+            type:   PostgresChangeFilterType.eq,
+            column: 'id',
+            value:  householdId,
+          ),
+          callback: (payload) => _handleRealtimeUpdate(payload.newRecord),
+        )
+        .subscribe();
+  }
+
+  void _handleRealtimeUpdate(Map<String, dynamic> record) {
+    if (!mounted) return;
+
+    final newApproval = record['approval_status'] as String?;
+    final newRescue   = (record['status'] as String? ?? '').toLowerCase();
+    final newAsset    = record['assigned_asset_id'] as String?;
+
+    // "Your request is queued."
+    if (_prevApprovalStatus != 'approved' && newApproval == 'approved') {
+      _showStatusNotification(
+        icon:  Icons.check_circle,
+        color: const Color(0xFF2E7D32),
+        title: 'Registration Approved',
+        body:  'Your request is now queued for rescue operations.',
+      );
+    }
+
+    // "Responders are on the way."
+    if (_prevAssignedAssetId == null && newAsset != null) {
+      _showStatusNotification(
+        icon:  Icons.directions_run,
+        color: AppColors.accent,
+        title: 'Responders on the way',
+        body:  'A rescue team has been dispatched to your location.',
+      );
+    }
+
+    // "Marked as Rescued."
+    if (_prevRescueStatus != 'rescued' && newRescue == 'rescued') {
+      _showStatusNotification(
+        icon:  Icons.favorite,
+        color: const Color(0xFF1565C0),
+        title: 'Marked as Rescued',
+        body:  'You have been marked as rescued. Stay safe!',
+      );
+    }
+
+    // Also notify when registration is rejected
+    if (_prevApprovalStatus != 'rejected' && newApproval == 'rejected') {
+      _showStatusNotification(
+        icon:  Icons.cancel,
+        color: const Color(0xFFD32F2F),
+        title: 'Registration Rejected',
+        body:  'Please re-submit with valid documentation.',
+      );
+    }
+
+    _prevApprovalStatus  = newApproval;
+    _prevRescueStatus    = newRescue;
+    _prevAssignedAssetId = newAsset;
+
+    // Refresh local state
+    setState(() => _loading = true);
+    _fetchMyHousehold();
+  }
+
+  void _showStatusNotification({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String body,
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior:        SnackBarBehavior.floating,
+        backgroundColor: AppColors.surface,
+        duration:        const Duration(seconds: 5),
+        margin:          const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: color.withValues(alpha: 0.4)),
+        ),
+        content: Row(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                  const SizedBox(height: 2),
+                  Text(body,
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  Future<void> _confirmMarkSafe() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('I Am Safe',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'This will mark you as rescued and remove your household from the active rescue queue.\n\n'
+          'Only confirm if you have already evacuated independently.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2E7D32)),
+            child: const Text('Yes, I Am Safe'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _markAsSafe();
+  }
+
+  Future<void> _markAsSafe() async {
+    if (_myHousehold == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _db.from('households').update({
+        'status':            'Rescued',
+        'assigned_asset_id': null,
+        'dispatched_at':     null,
+      }).eq('id', _myHousehold!.id);
+      if (mounted) {
+        setState(() => _loading = true);
+        await _fetchMyHousehold();
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Marked as safe. Removed from rescue queue.'),
+            backgroundColor: Color(0xFF2E7D32),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  Future<void> _confirmCancelRequest() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('Cancel Rescue Request',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'This will cancel the current rescue dispatch and return your record to the pending queue. '
+          'You can request again later.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep Request',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF85149)),
+            child: const Text('Cancel Request'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _cancelRequest();
+  }
+
+  Future<void> _cancelRequest() async {
+    if (_myHousehold == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _db.from('households').update({
+        'assigned_asset_id': null,
+        'dispatched_at':     null,
+      }).eq('id', _myHousehold!.id);
+      if (mounted) {
+        setState(() => _loading = true);
+        await _fetchMyHousehold();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Rescue request cancelled.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -65,28 +322,58 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
           children: [
             _buildHeader(username),
             Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: AppColors.accent))
-                  : _showForm || _myHousehold == null
-                      ? _CitizenRegistrationForm(
-                          contact: username,
-                          onSubmitted: () {
-                            setState(() {
-                              _showForm = false;
-                              _loading = true;
-                            });
-                            _fetchMyHousehold();
-                          },
-                        )
-                      : _HouseholdStatusView(
-                          household: _myHousehold!,
-                          onResubmit: () => setState(() => _showForm = true),
-                        ),
+              child: IndexedStack(
+                index: _tabIndex,
+                children: [
+                  _buildHomeTab(username),
+                  const _CitizenMapTab(),
+                ],
+              ),
             ),
           ],
         ),
       ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        destinations: const [
+          NavigationDestination(
+            icon:         Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon:         Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Risk Map',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeTab(String username) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.accent));
+    }
+    if (_showForm || _myHousehold == null) {
+      return _CitizenRegistrationForm(
+        contact: username,
+        onSubmitted: () {
+          setState(() {
+            _showForm = false;
+            _loading  = true;
+          });
+          _fetchMyHousehold();
+        },
+      );
+    }
+    return _HouseholdStatusView(
+      household:       _myHousehold!,
+      onResubmit:      () => setState(() => _showForm = true),
+      onMarkSafe:      _confirmMarkSafe,
+      onCancelRequest: _confirmCancelRequest,
     );
   }
 
@@ -147,14 +434,117 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
   }
 }
 
-// ── Status view (household already submitted) ─────────────────────────────────
+// ── Citizen map tab (read-only risk map) ────────────────────────────────────────
+
+class _CitizenMapTab extends ConsumerStatefulWidget {
+  const _CitizenMapTab();
+
+  @override
+  ConsumerState<_CitizenMapTab> createState() => _CitizenMapTabState();
+}
+
+class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
+  Set<Marker>  _markers        = {};
+  bool         _iconsPreloaded = false;
+  List<Household> _lastHouseholds = [];
+
+  static const _initial = CameraPosition(
+    target: LatLng(10.6765, 122.9509),
+    zoom: 13.5,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    preloadMarkerIcons().then((_) {
+      if (mounted) setState(() => _iconsPreloaded = true);
+    });
+  }
+
+  Future<void> _rebuildMarkers(List<Household> households) async {
+    final householdMarkers = await buildHouseholdMarkersAsync(
+      households: households,
+      onTap: (_) {}, // read-only in citizen view
+    );
+    if (mounted) {
+      setState(() => _markers = householdMarkers);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final households = ref.watch(householdProvider);
+    if (_iconsPreloaded && households != _lastHouseholds) {
+      _lastHouseholds = households;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _rebuildMarkers(households);
+      });
+    }
+
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: _initial,
+          markers:               _markers,
+          mapType:               MapType.normal,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled:     false,
+        ),
+        // Legend (bottom-left)
+        Positioned(
+          left:   0,
+          bottom: 0,
+          child:  const LegendWidget(),
+        ),
+        // Asset indicator (top)
+        Positioned(
+          top:  12,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.surface.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.divider),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.directions_car,
+                      color: AppColors.accent, size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Risk Map',
+                    style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Status view ─────────────────────────────────────────────────────────────────
 
 class _HouseholdStatusView extends StatelessWidget {
-  final Household household;
+  final Household    household;
   final VoidCallback onResubmit;
+  final VoidCallback onMarkSafe;
+  final VoidCallback onCancelRequest;
+
   const _HouseholdStatusView({
     required this.household,
     required this.onResubmit,
+    required this.onMarkSafe,
+    required this.onCancelRequest,
   });
 
   @override
@@ -171,11 +561,68 @@ class _HouseholdStatusView extends StatelessWidget {
           _StatusBanner(status: status),
           const SizedBox(height: 16),
 
+          // ── Quick actions ────────────────────────────────────────────────
+          if (status == 'approved' && !h.isRescued) ...[
+            Row(
+              children: [
+                // I AM SAFE
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onMarkSafe,
+                    icon:  const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text('I AM SAFE',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2E7D32),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ),
+                // CANCEL REQUEST — only show when dispatched
+                if (h.isDispatched) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onCancelRequest,
+                      icon:  const Icon(Icons.cancel_outlined,
+                          size: 18, color: Color(0xFFF85149)),
+                      label: const Text('CANCEL',
+                          style: TextStyle(
+                              color: Color(0xFFF85149),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFFF85149)),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              h.isDispatched
+                  ? 'Tap "I AM SAFE" if you evacuated independently, or "CANCEL" if your situation changed.'
+                  : 'Tap if you have already evacuated independently. This removes you from the rescue queue.',
+              style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 11,
+                  height: 1.4),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // ── Household info ───────────────────────────────────────────────
           _InfoCard(
             title: 'YOUR HOUSEHOLD',
             rows: [
-              _InfoRow('Head', h.head),
+              _InfoRow('Head',    h.head),
               _InfoRow('Contact', h.contact),
               _InfoRow('Location',
                   '${h.barangay}, ${h.city}'
@@ -218,10 +665,10 @@ class _HouseholdStatusView extends StatelessWidget {
                 _InfoRow(
                   'Status',
                   h.isRescued
-                      ? '✅ Rescued'
+                      ? '✅ Rescued / Safe'
                       : h.assignedAssetId != null
-                          ? '🚨 Rescuer dispatched'
-                          : '⏳ Awaiting rescue',
+                          ? '🚨 Rescuers dispatched — on the way'
+                          : '⏳ Awaiting rescue dispatch',
                 ),
               ],
             ),
@@ -328,9 +775,9 @@ class _StatusBanner extends StatelessWidget {
 }
 
 class _InfoCard extends StatelessWidget {
-  final String title;
+  final String      title;
   final List<_InfoRow> rows;
-  final Color? accentColor;
+  final Color?      accentColor;
   const _InfoCard({required this.title, required this.rows, this.accentColor});
 
   @override
@@ -386,11 +833,11 @@ class _InfoRow {
   const _InfoRow(this.label, this.value);
 }
 
-// ── Registration form ─────────────────────────────────────────────────────────
+// ── Registration form ──────────────────────────────────────────────────────────
 
 class _CitizenRegistrationForm extends ConsumerStatefulWidget {
-  final String contact;
-  final VoidCallback onSubmitted;
+  final String        contact;
+  final VoidCallback  onSubmitted;
   const _CitizenRegistrationForm({
     required this.contact,
     required this.onSubmitted,
@@ -403,16 +850,16 @@ class _CitizenRegistrationForm extends ConsumerStatefulWidget {
 
 class _CitizenRegistrationFormState
     extends ConsumerState<_CitizenRegistrationForm> {
-  final _headCtrl    = TextEditingController();
-  final _purokCtrl   = TextEditingController();
-  final _streetCtrl  = TextEditingController();
-  final _notesCtrl   = TextEditingController();
-  int _occupants     = 1;
-  String? _city;
-  String? _barangay;
+  final _headCtrl   = TextEditingController();
+  final _purokCtrl  = TextEditingController();
+  final _streetCtrl = TextEditingController();
+  final _notesCtrl  = TextEditingController();
+  int   _occupants  = 1;
+  String?           _city;
+  String?           _barangay;
   final Set<Vulnerability> _vulns = {};
-  XFile? _document;
-  bool _submitting = false;
+  XFile?  _document;
+  bool    _submitting = false;
   String? _error;
 
   @override
@@ -426,7 +873,7 @@ class _CitizenRegistrationFormState
 
   Future<void> _pickDocument() async {
     final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery);
+    final file   = await picker.pickImage(source: ImageSource.gallery);
     if (file != null) setState(() => _document = file);
   }
 
@@ -439,12 +886,10 @@ class _CitizenRegistrationFormState
 
     try {
       String? docUrl;
-
-      // Upload document to Supabase Storage if selected
       if (_document != null) {
-        final bytes    = await _document!.readAsBytes();
-        final ext      = _document!.name.split('.').last;
-        final path     = 'citizen-docs/${const Uuid().v4()}.$ext';
+        final bytes = await _document!.readAsBytes();
+        final ext   = _document!.name.split('.').last;
+        final path  = 'citizen-docs/${const Uuid().v4()}.$ext';
         await _db.storage.from('documents').uploadBinary(path, bytes);
         docUrl = _db.storage.from('documents').getPublicUrl(path);
       }
@@ -462,7 +907,7 @@ class _CitizenRegistrationFormState
         'occupants':       _occupants,
         'vuln_arr':        _vulns.map((v) => v.name).toList(),
         'structure':       'singleStory',
-        'status':          'pending',
+        'status':          'Pending',
         'triage_level':    'stable',
         'approval_status': 'pending',
         'source':          'citizen',
@@ -475,7 +920,7 @@ class _CitizenRegistrationFormState
     } catch (e) {
       setState(() {
         _submitting = false;
-        _error = 'Submission failed. Please try again.';
+        _error      = 'Submission failed. Please try again.';
       });
     }
   }
@@ -491,7 +936,37 @@ class _CitizenRegistrationFormState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Banner ───────────────────────────────────────────────────────
+          // ── One-per-household notice ─────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2D1C0A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFD4862A).withValues(alpha: 0.5)),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: Color(0xFFD4862A), size: 18),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'STRICTLY ONE REGISTRATION PER HOUSEHOLD.\n'
+                    'Duplicate submissions will be rejected. If your household is already registered by LGU staff, do not re-register.',
+                    style: TextStyle(
+                        color: Color(0xFFD4862A),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        height: 1.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Info banner ──────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -500,12 +975,11 @@ class _CitizenRegistrationFormState
               border: Border.all(
                   color: AppColors.accent.withValues(alpha: 0.3)),
             ),
-            child: Row(
+            child: const Row(
               children: [
-                const Icon(Icons.info_outline,
-                    color: AppColors.accent, size: 20),
-                const SizedBox(width: 10),
-                const Expanded(
+                Icon(Icons.info_outline, color: AppColors.accent, size: 20),
+                SizedBox(width: 10),
+                Expanded(
                   child: Text(
                     'Self-Registration — Citizen Portal\n'
                     'Your submission will be reviewed by LGU staff before being added to the official vulnerability map.',
@@ -594,19 +1068,14 @@ class _CitizenRegistrationFormState
                   val ? _vulns.add(v) : _vulns.remove(v);
                 }),
                 backgroundColor: AppColors.cardBackground,
-                selectedColor:
-                    AppColors.accent.withValues(alpha: 0.2),
-                checkmarkColor: AppColors.accent,
+                selectedColor:   AppColors.accent.withValues(alpha: 0.2),
+                checkmarkColor:  AppColors.accent,
                 labelStyle: TextStyle(
-                  color: selected
-                      ? AppColors.accent
-                      : AppColors.textSecondary,
+                  color: selected ? AppColors.accent : AppColors.textSecondary,
                   fontSize: 12,
                 ),
                 side: BorderSide(
-                  color: selected
-                      ? AppColors.accent
-                      : AppColors.divider,
+                  color: selected ? AppColors.accent : AppColors.divider,
                 ),
               );
             }).toList(),
@@ -616,8 +1085,7 @@ class _CitizenRegistrationFormState
           _sectionLabel('SUPPORTING DOCUMENT'),
           Text(
             'Upload a valid Senior/PWD ID or medical certificate.',
-            style: TextStyle(
-                color: AppColors.textSecondary, fontSize: 12),
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 8),
           GestureDetector(
@@ -628,9 +1096,7 @@ class _CitizenRegistrationFormState
                 color: AppColors.cardBackground,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: _document != null
-                      ? AppColors.accent
-                      : AppColors.divider,
+                  color: _document != null ? AppColors.accent : AppColors.divider,
                   style: BorderStyle.solid,
                 ),
               ),
@@ -668,26 +1134,23 @@ class _CitizenRegistrationFormState
           TextField(
             controller: _notesCtrl,
             maxLines: 3,
-            style: const TextStyle(
-                color: AppColors.textPrimary, fontSize: 13),
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
             decoration: InputDecoration(
-              hintText: 'Any special circumstances...',
-              hintStyle: TextStyle(
-                  color: AppColors.textMuted, fontSize: 13),
-              filled: true,
+              hintText:  'Any special circumstances...',
+              hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              filled:    true,
               fillColor: AppColors.cardBackground,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.divider),
+                borderSide:   BorderSide(color: AppColors.divider),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.divider),
+                borderSide:   BorderSide(color: AppColors.divider),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    const BorderSide(color: AppColors.accent),
+                borderSide:   const BorderSide(color: AppColors.accent),
               ),
             ),
           ),
@@ -699,8 +1162,7 @@ class _CitizenRegistrationFormState
               decoration: BoxDecoration(
                 color: const Color(0xFF2D1217),
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                    color: const Color(0xAAF85149)),
+                border: Border.all(color: const Color(0xAAF85149)),
               ),
               child: Text(_error!,
                   style: const TextStyle(
@@ -715,18 +1177,16 @@ class _CitizenRegistrationFormState
               onPressed: _submitting ? null : _submit,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.accent,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 15),
+                padding:         const EdgeInsets.symmetric(vertical: 15),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8)),
               ),
               child: _submitting
                   ? const SizedBox(
-                      width: 20,
+                      width:  20,
                       height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white))
+                      child:  CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Text(
                       'SUBMIT REGISTRATION',
                       style: TextStyle(
@@ -767,56 +1227,48 @@ class _CitizenRegistrationFormState
           _label(hint),
           TextField(
             controller: ctrl,
-            style: const TextStyle(
-                color: AppColors.textPrimary, fontSize: 13),
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
             decoration: InputDecoration(
-              hintText: hint.replaceAll(' *', ''),
-              hintStyle: TextStyle(
-                  color: AppColors.textMuted, fontSize: 13),
-              filled: true,
+              hintText:  hint.replaceAll(' *', ''),
+              hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              filled:    true,
               fillColor: AppColors.cardBackground,
               contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12, vertical: 11),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      BorderSide(color: AppColors.divider)),
+                  borderSide:   BorderSide(color: AppColors.divider)),
               enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      BorderSide(color: AppColors.divider)),
+                  borderSide:   BorderSide(color: AppColors.divider)),
               focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(
-                      color: AppColors.accent)),
+                  borderSide:   const BorderSide(color: AppColors.accent)),
             ),
           ),
         ],
       );
 
   Widget _dropdown({
-    required String hint,
-    required String? value,
-    required List<String> items,
+    required String             hint,
+    required String?            value,
+    required List<String>       items,
     required ValueChanged<String?>? onChanged,
   }) =>
       Container(
         decoration: _boxDecor(),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: DropdownButton<String>(
-          value: value,
-          hint: Text(hint,
-              style: TextStyle(
-                  color: AppColors.textMuted, fontSize: 13)),
-          isExpanded: true,
-          underline: const SizedBox.shrink(),
+          value:        value,
+          hint:         Text(hint,
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          isExpanded:   true,
+          underline:    const SizedBox.shrink(),
           dropdownColor: AppColors.cardBackground,
-          style: const TextStyle(
-              color: AppColors.textPrimary, fontSize: 13),
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
           onChanged: onChanged,
           items: items
-              .map((e) =>
-                  DropdownMenuItem(value: e, child: Text(e)))
+              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
               .toList(),
         ),
       );
@@ -831,10 +1283,8 @@ class _CitizenRegistrationFormState
       GestureDetector(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-              horizontal: 10, vertical: 8),
-          child: Icon(icon,
-              color: AppColors.textSecondary, size: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Icon(icon, color: AppColors.textSecondary, size: 18),
         ),
       );
 }

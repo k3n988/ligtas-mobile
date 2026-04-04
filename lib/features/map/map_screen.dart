@@ -52,9 +52,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       households: households,
       onTap: (h) => ctrl.selectHousehold(h, assets: assets),
     );
-    final assetMarkers = buildAssetMarkers(assets);
     if (mounted) {
-      setState(() => _markers = {...householdMarkers, ...assetMarkers});
+      setState(() => _markers = householdMarkers);
     }
   }
 
@@ -105,7 +104,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             markers: _markers,
             polylines: state.polylines,
             mapType: state.mapType,
-            style: state.is3D ? null : _cleanMapStyle,
+            style: _cleanMapStyle,
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,

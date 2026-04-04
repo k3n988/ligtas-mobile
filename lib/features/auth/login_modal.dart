@@ -5,6 +5,8 @@ import 'auth_provider.dart';
 
 enum AuthTab { login, signUp }
 
+enum _LoginMode { citizen, staff }
+
 class LoginModal extends ConsumerStatefulWidget {
   final AuthTab initialTab;
   const LoginModal({super.key, this.initialTab = AuthTab.login});
@@ -14,16 +16,19 @@ class LoginModal extends ConsumerStatefulWidget {
 }
 
 class _LoginModalState extends ConsumerState<LoginModal> {
-  late AuthTab _tab;
+  late bool _isSignUp;
+  _LoginMode _loginMode = _LoginMode.citizen;
+
   final _contactCtrl  = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl  = TextEditingController();
+  bool _obscurePassword = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tab = widget.initialTab;
+    _isSignUp = widget.initialTab == AuthTab.signUp;
   }
 
   @override
@@ -38,17 +43,16 @@ class _LoginModalState extends ConsumerState<LoginModal> {
     setState(() => _error = null);
     final contact  = _contactCtrl.text.trim();
     final password = _passwordCtrl.text;
-    final confirm  = _confirmCtrl.text;
 
-    if (_tab == AuthTab.signUp && password != confirm) {
+    if (_isSignUp && password != _confirmCtrl.text) {
       setState(() => _error = 'Passwords do not match.');
       return;
     }
 
     final notifier = ref.read(authProvider.notifier);
-    final err = _tab == AuthTab.login
-        ? await notifier.login(contact, password)
-        : await notifier.signUp(contact, password);
+    final err = _isSignUp
+        ? await notifier.signUp(contact, password)
+        : await notifier.login(contact, password);
 
     if (err != null) {
       setState(() => _error = err);
@@ -57,10 +61,22 @@ class _LoginModalState extends ConsumerState<LoginModal> {
     }
   }
 
-  void _switchTab(AuthTab t) {
+  void _switchTopTab(bool signUp) {
     setState(() {
-      _tab  = t;
+      _isSignUp = signUp;
       _error = null;
+      _contactCtrl.clear();
+      _passwordCtrl.clear();
+      _confirmCtrl.clear();
+    });
+  }
+
+  void _switchMode(_LoginMode mode) {
+    setState(() {
+      _loginMode = mode;
+      _error = null;
+      _contactCtrl.clear();
+      _passwordCtrl.clear();
     });
   }
 
@@ -90,7 +106,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
               ),
               const SizedBox(height: 4),
               Text(
-                _tab == AuthTab.login ? 'Sign In' : 'Create Account',
+                _isSignUp ? 'Create Account' : 'Sign In',
                 style: const TextStyle(
                   fontSize: 18,
                   color: Colors.white,
@@ -100,43 +116,127 @@ class _LoginModalState extends ConsumerState<LoginModal> {
               ),
               const SizedBox(height: 20),
 
-              // ── Tabs ────────────────────────────────────────────────────────
+              // ── Top tabs: LOG IN | SIGN UP ───────────────────────────────────
               Row(
                 children: [
-                  _tab_(AuthTab.login, 'LOG IN'),
+                  _topTab('LOG IN',   !_isSignUp, () => _switchTopTab(false)),
                   const SizedBox(width: 4),
-                  _tab_(AuthTab.signUp, 'SIGN UP'),
+                  _topTab('SIGN UP',   _isSignUp, () => _switchTopTab(true)),
                 ],
               ),
               const Divider(color: Color(0xFF30363D), height: 1),
               const SizedBox(height: 16),
 
-              // ── Blurb ───────────────────────────────────────────────────────
-              Text(
-                _tab == AuthTab.login
-                    ? 'LGU-registered households: enter your contact number and the password given by the LGU. Staff: use your email.'
-                    : 'Register using your email or household contact number.',
-                style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12, height: 1.5),
-              ),
-              const SizedBox(height: 16),
+              if (!_isSignUp) ...[
+                // ── Mode toggle: CITIZEN | STAFF ─────────────────────────────
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D1117),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                  ),
+                  padding: const EdgeInsets.all(3),
+                  child: Row(
+                    children: [
+                      _modeBtn('CITIZEN', Icons.person_outline, _LoginMode.citizen),
+                      _modeBtn('STAFF',   Icons.badge_outlined,  _LoginMode.staff),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
 
-              // ── Form ────────────────────────────────────────────────────────
-              _label('Username / Contact Number'),
-              _field(
-                controller: _contactCtrl,
-                hint: 'Email or 09XXXXXXXXX',
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 12),
+                // ── Hint banner ───────────────────────────────────────────────
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: _loginMode == _LoginMode.citizen
+                        ? AppColors.accent.withValues(alpha: 0.08)
+                        : const Color(0xFF21262D),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: _loginMode == _LoginMode.citizen
+                          ? AppColors.accent.withValues(alpha: 0.3)
+                          : const Color(0xFF30363D),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        _loginMode == _LoginMode.citizen
+                            ? Icons.phone_android
+                            : Icons.admin_panel_settings_outlined,
+                        size: 14,
+                        color: _loginMode == _LoginMode.citizen
+                            ? AppColors.accent
+                            : const Color(0xFF8B949E),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _loginMode == _LoginMode.citizen
+                              ? 'Enter the contact number and password issued by the LGU during registration.'
+                              : 'LGU staff (admin / rescuer): sign in with your registered email.',
+                          style: TextStyle(
+                            color: _loginMode == _LoginMode.citizen
+                                ? AppColors.accent
+                                : const Color(0xFF8B949E),
+                            fontSize: 11,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
 
-              _label('Password'),
-              _field(
-                controller: _passwordCtrl,
-                hint: 'Enter your password',
-                obscure: true,
-              ),
+                // ── Contact / Email field ─────────────────────────────────────
+                _label(_loginMode == _LoginMode.citizen ? 'Contact Number' : 'Email Address'),
+                _field(
+                  controller: _contactCtrl,
+                  hint: _loginMode == _LoginMode.citizen ? '09XXXXXXXXX' : 'name@example.com',
+                  keyboardType: _loginMode == _LoginMode.citizen
+                      ? TextInputType.phone
+                      : TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 12),
 
-              if (_tab == AuthTab.signUp) ...[
+                _label(_loginMode == _LoginMode.citizen ? 'LGU-Issued Password' : 'Password'),
+                _field(
+                  controller: _passwordCtrl,
+                  hint: _loginMode == _LoginMode.citizen ? 'Password from LGU' : 'Enter your password',
+                  obscure: _obscurePassword,
+                  onSubmit: _submit,
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                      color: const Color(0xFF8B949E),
+                      size: 18,
+                    ),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                ),
+              ] else ...[
+                // ── Sign-up form ─────────────────────────────────────────────
+                const Text(
+                  'Create an account to access the Citizen Portal. Your submission will be reviewed by LGU staff.',
+                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12, height: 1.5),
+                ),
+                const SizedBox(height: 14),
+                _label('Email Address'),
+                _field(
+                  controller: _contactCtrl,
+                  hint: 'name@example.com',
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 12),
+                _label('Password'),
+                _field(
+                  controller: _passwordCtrl,
+                  hint: 'At least 6 characters',
+                  obscure: true,
+                ),
                 const SizedBox(height: 12),
                 _label('Confirm Password'),
                 _field(
@@ -147,6 +247,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
                 ),
               ],
 
+              // ── Error banner ─────────────────────────────────────────────────
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -165,15 +266,14 @@ class _LoginModalState extends ConsumerState<LoginModal> {
 
               const SizedBox(height: 20),
 
-              // ── Submit ──────────────────────────────────────────────────────
+              // ── Submit ───────────────────────────────────────────────────────
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: loading ? null : _submit,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: loading
-                        ? const Color(0xFF21262D)
-                        : AppColors.accent,
+                    backgroundColor:
+                        loading ? const Color(0xFF21262D) : AppColors.accent,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(4)),
@@ -187,7 +287,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
                               strokeWidth: 2, color: Colors.white),
                         )
                       : Text(
-                          _tab == AuthTab.login ? 'LOG IN' : 'CREATE ACCOUNT',
+                          _isSignUp ? 'CREATE ACCOUNT' : 'LOG IN',
                           style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               letterSpacing: 1,
@@ -196,8 +296,6 @@ class _LoginModalState extends ConsumerState<LoginModal> {
                 ),
               ),
               const SizedBox(height: 10),
-
-              // ── Cancel ──────────────────────────────────────────────────────
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
@@ -219,30 +317,63 @@ class _LoginModalState extends ConsumerState<LoginModal> {
     );
   }
 
-  Widget _tab_(AuthTab t, String label) {
-    final active = _tab == t;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _switchTab(t),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: active ? AppColors.accent : Colors.transparent,
-                width: 2,
+  // ── Sub-widgets ─────────────────────────────────────────────────────────────
+
+  Widget _topTab(String label, bool active, VoidCallback onTap) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: active ? AppColors.accent : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1,
+                color: active ? AppColors.accent : const Color(0xFF8B949E),
               ),
             ),
           ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1,
-              color: active ? AppColors.accent : const Color(0xFF8B949E),
-            ),
+        ),
+      );
+
+  Widget _modeBtn(String label, IconData icon, _LoginMode mode) {
+    final active = _loginMode == mode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _switchMode(mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: active ? AppColors.accent.withValues(alpha: 0.15) : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14,
+                  color: active ? AppColors.accent : const Color(0xFF8B949E)),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                  color: active ? AppColors.accent : const Color(0xFF8B949E),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -268,37 +399,38 @@ class _LoginModalState extends ConsumerState<LoginModal> {
     bool obscure = false,
     TextInputType? keyboardType,
     VoidCallback? onSubmit,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: obscure,
-      keyboardType: keyboardType,
-      autocorrect: false,
-      enableSuggestions: false,
-      textInputAction:
-          onSubmit != null ? TextInputAction.done : TextInputAction.next,
-      onSubmitted: onSubmit != null ? (_) => onSubmit() : null,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: Color(0xFF8B949E), fontSize: 14),
-        filled: true,
-        fillColor: const Color(0xFF0D1117),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(4),
-          borderSide: const BorderSide(color: Color(0xFF30363D)),
+    Widget? suffixIcon,
+  }) =>
+      TextField(
+        controller: controller,
+        obscureText: obscure,
+        keyboardType: keyboardType,
+        autocorrect: false,
+        enableSuggestions: false,
+        textInputAction:
+            onSubmit != null ? TextInputAction.done : TextInputAction.next,
+        onSubmitted: onSubmit != null ? (_) => onSubmit() : null,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: const TextStyle(color: Color(0xFF8B949E), fontSize: 14),
+          filled: true,
+          fillColor: const Color(0xFF0D1117),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          suffixIcon: suffixIcon,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: const BorderSide(color: Color(0xFF30363D)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: const BorderSide(color: Color(0xFF30363D)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: AppColors.accent),
+          ),
         ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(4),
-          borderSide: const BorderSide(color: Color(0xFF30363D)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(4),
-          borderSide: BorderSide(color: AppColors.accent),
-        ),
-      ),
-    );
-  }
+      );
 }

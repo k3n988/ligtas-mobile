@@ -1,4 +1,6 @@
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -120,6 +122,10 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   void initState() {
     super.initState();
     _loadHouseholds();
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor:      Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
   }
 
   @override
@@ -687,77 +693,131 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          // Slight dark gradient so header reads on top of the map
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              AppColors.surface.withValues(alpha: 0.97),
-              AppColors.surface.withValues(alpha: 0.85),
-            ],
-          ),
-          border: Border(
-              bottom: BorderSide(color: AppColors.divider.withValues(alpha: 0.6))),
-        ),
-        child: Row(
-          children: [
-            Image.asset(
-              'asset/logo2.png',
-              width: 42,
-              height: 42,
-              fit: BoxFit.contain,
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: SafeArea(
+          bottom: false,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1117).withValues(alpha: 0.80),
+              border: Border(
+                bottom: BorderSide(
+                  color: AppColors.accent.withValues(alpha: 0.18),
+                  width: 0.5,
+                ),
+              ),
             ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
               children: [
-                const Text(
-                  'L.I.G.T.A.S.',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                    letterSpacing: 2,
+                // ── Logo with accent ring ──────────────────────────────────
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.accent.withValues(alpha: 0.35),
+                      width: 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.accent.withValues(alpha: 0.15),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'asset/logo2.png',
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
-                Text(
-                  'Location Intelligence & Geospatial Triage',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 9,
-                    letterSpacing: 0.3,
+                const SizedBox(width: 11),
+
+                // ── Title + subtitle ───────────────────────────────────────
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          'L.I.G.T.A.S.',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            letterSpacing: 2.5,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        // Live indicator dot
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3fb950),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF3fb950)
+                                    .withValues(alpha: 0.55),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      'Location Intelligence & Geospatial Triage',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 10,
+                        letterSpacing: 0.2,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const Spacer(),
+
+                // ── LOG IN button ──────────────────────────────────────────
+                GestureDetector(
+                  onTap: onLoginTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.accent.withValues(alpha: 0.35),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: const Text(
+                      'LOG IN',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
-            const Spacer(),
-            FilledButton(
-              onPressed: onLoginTap,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                minimumSize: Size.zero,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6)),
-              ),
-              child: const Text(
-                'LOG IN',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

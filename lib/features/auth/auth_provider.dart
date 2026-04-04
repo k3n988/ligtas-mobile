@@ -108,7 +108,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     // ── Citizen login (contact number → households table) ─────────────────
     if (_looksLikeContactNumber(contact)) {
-      return _citizenLogin(contact.replaceAll(RegExp(r'[\s\-]'), ''), password);
+      return _citizenLogin(_normaliseContact(contact), password);
     }
 
     // ── Real Supabase auth (email-based) ──────────────────────────────────
@@ -129,11 +129,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  // ── Citizen login via households table (bcrypt verified by RPC) ───────────
+  // ── Citizen login via households table (verified by RPC) ─────────────────
 
   bool _looksLikeContactNumber(String input) {
-    final cleaned = input.replaceAll(RegExp(r'[\s\-]'), '');
-    return RegExp(r'^\d{10,12}$').hasMatch(cleaned);
+    // Strip spaces, dashes, and + so +639... and 09... both match
+    final cleaned = input.replaceAll(RegExp(r'[\s\-\+]'), '');
+    return RegExp(r'^\d{10,13}$').hasMatch(cleaned) && !input.contains('@');
+  }
+
+  /// Normalise any PH mobile format to 09XXXXXXXXX (11 digits)
+  String _normaliseContact(String raw) {
+    final cleaned = raw.replaceAll(RegExp(r'[\s\-\+]'), '');
+    // +639171234567 → 639171234567 (12 digits) → 09171234567
+    if (cleaned.startsWith('63') && cleaned.length == 12) {
+      return '0${cleaned.substring(2)}';
+    }
+    return cleaned;
   }
 
   Future<String?> _citizenLogin(String contact, String password) async {
@@ -143,7 +154,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
         params: {'p_contact': contact, 'p_password': password},
       );
 
-      if (result == null) {
+      // RPC returns true on success, false or null on failure
+      if (result != true) {
         state = state.copyWith(isLoading: false);
         return 'Incorrect contact number or password.';
       }
@@ -155,9 +167,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
         role:       UserRole.citizen,
       );
       return null;
-    } catch (_) {
+    } catch (e) {
       state = state.copyWith(isLoading: false);
-      return 'Login failed. Check your connection.';
+      return 'Citizen login error: $e';
     }
   }
 
