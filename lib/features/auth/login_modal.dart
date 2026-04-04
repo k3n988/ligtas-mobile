@@ -114,17 +114,17 @@ class _LoginModalState extends ConsumerState<LoginModal> {
               // ── Blurb ───────────────────────────────────────────────────────
               Text(
                 _tab == AuthTab.login
-                    ? 'Use your email or household contact number and password to sign in.'
+                    ? 'LGU-registered households: enter your contact number and the password given by the LGU. Staff: use your email.'
                     : 'Register using your email or household contact number.',
                 style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12, height: 1.5),
               ),
               const SizedBox(height: 16),
 
               // ── Form ────────────────────────────────────────────────────────
-              _label('Username'),
+              _label('Username / Contact Number'),
               _field(
                 controller: _contactCtrl,
-                hint: 'Email or 09XX-XXX-XXXX',
+                hint: 'Email or 09XXXXXXXXX',
                 keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 12),
@@ -132,7 +132,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
               _label('Password'),
               _field(
                 controller: _passwordCtrl,
-                hint: 'Min. 6 characters',
+                hint: 'Enter your password',
                 obscure: true,
               ),
 

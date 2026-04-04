@@ -106,7 +106,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return null;
     }
 
-    // ── Real Supabase auth ────────────────────────────────────────────────
+    // ── Citizen login (contact number → households table) ─────────────────
+    if (_looksLikeContactNumber(contact)) {
+      return _citizenLogin(contact.replaceAll(RegExp(r'[\s\-]'), ''), password);
+    }
+
+    // ── Real Supabase auth (email-based) ──────────────────────────────────
     if (password.length < 6) {
       state = state.copyWith(isLoading: false);
       return 'Password must be at least 6 characters.';
@@ -118,6 +123,38 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } on AuthException catch (e) {
       state = state.copyWith(isLoading: false);
       return _friendlyError(e.message);
+    } catch (_) {
+      state = state.copyWith(isLoading: false);
+      return 'Login failed. Check your connection.';
+    }
+  }
+
+  // ── Citizen login via households table (bcrypt verified by RPC) ───────────
+
+  bool _looksLikeContactNumber(String input) {
+    final cleaned = input.replaceAll(RegExp(r'[\s\-]'), '');
+    return RegExp(r'^\d{10,12}$').hasMatch(cleaned);
+  }
+
+  Future<String?> _citizenLogin(String contact, String password) async {
+    try {
+      final result = await _client.rpc(
+        'verify_citizen_login',
+        params: {'p_contact': contact, 'p_password': password},
+      );
+
+      if (result == null) {
+        state = state.copyWith(isLoading: false);
+        return 'Incorrect contact number or password.';
+      }
+
+      state = AuthState(
+        isLoggedIn: true,
+        isLoading:  false,
+        username:   contact,
+        role:       UserRole.citizen,
+      );
+      return null;
     } catch (_) {
       state = state.copyWith(isLoading: false);
       return 'Login failed. Check your connection.';
@@ -154,8 +191,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // ── Logout ────────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
-    // Dev accounts — just clear state
-    if (_testAccounts.containsKey(state.username?.toLowerCase())) {
+    // Dev accounts or citizen login — just clear state (no Supabase session)
+    if (_testAccounts.containsKey(state.username?.toLowerCase()) ||
+        state.role == UserRole.citizen) {
       state = const AuthState();
       return;
     }

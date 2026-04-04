@@ -9,12 +9,10 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
-import 'package:geolocator/geolocator.dart';
 import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
-
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
@@ -32,6 +30,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Set<Marker> _markers = {};
   List<Household> _lastHouseholds = [];
   bool _iconsPreloaded = false;
+  bool _hasInitialZoomed = false;
 
   @override
   void initState() {
@@ -71,6 +70,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _lastHouseholds = households;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _rebuildMarkers(households, assets, ctrl);
+
+        // Auto-zoom to fit all pins ONLY on the first successful load
+        if (!_hasInitialZoomed && households.isNotEmpty) {
+          _hasInitialZoomed = true;
+          // Small delay so the map layout finishes rendering first
+          Future.delayed(const Duration(milliseconds: 300), () {
+            ctrl.fitAllHouseholds(households);
+          });
+        }
       });
     }
 
@@ -167,7 +175,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 }
 
 // ── Household overlay panel ───────────────────────────────────────────────────
-// (Unchanged - Kept intact from your original code)
+
 class _HouseholdPanel extends StatelessWidget {
   final Household household;
   final Asset? nearestAsset;
@@ -446,7 +454,7 @@ class _HouseholdPanel extends StatelessWidget {
 }
 
 // ── Search bar ────────────────────────────────────────────────────────────────
-// (Unchanged)
+
 class _SearchBar extends StatefulWidget {
   final MapControllerNotifier ctrl;
   final bool isSearching;
@@ -545,7 +553,6 @@ class _SearchBarState extends State<_SearchBar> {
 }
 
 // ── Right-side map controls ───────────────────────────────────────────────────
-// UPDATED: Now visually matches the screenshot exactly
 
 class _MapControls extends StatelessWidget {
   final MapControllerNotifier ctrl;
@@ -556,7 +563,7 @@ class _MapControls extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // GROUP 1: Zoom In, Zoom Out, Compass (Grouped together)
+        // GROUP 1: Zoom In, Zoom Out, Compass
         Container(
           width: 44,
           decoration: _boxDecoration(),
@@ -572,18 +579,18 @@ class _MapControls extends StatelessWidget {
         ),
         const SizedBox(height: 10),
 
-        // GROUP 2: My Location (Standalone)
+        // GROUP 2: My Location
         Container(
           width: 44,
           decoration: _boxDecoration(),
           child: _ControlButton(
             icon: Icons.my_location,
-            onTap: ctrl.goToMyLocation, // ** Requires update in your controller! **
+            onTap: ctrl.goToMyLocation,
           ),
         ),
         const SizedBox(height: 10),
 
-        // GROUP 3: Map Type Toggle (Standalone)
+        // GROUP 3: Map Type Toggle
         Container(
           width: 44,
           decoration: _boxDecoration(),
@@ -600,7 +607,7 @@ class _MapControls extends StatelessWidget {
   BoxDecoration _boxDecoration() {
     return BoxDecoration(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(6), // Slightly tighter radius like web
+      borderRadius: BorderRadius.circular(6),
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.15),
@@ -614,7 +621,7 @@ class _MapControls extends StatelessWidget {
   Widget _divider() {
     return Container(
       height: 1,
-      width: 32, // Leaves a nice little margin on the sides of the divider
+      width: 32,
       color: Colors.grey.withValues(alpha: 0.3),
     );
   }
@@ -633,7 +640,6 @@ class _ControlButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // We use a Material wrapper so the InkWell ripple effect looks proper
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -655,7 +661,7 @@ class _ControlButton extends StatelessWidget {
 }
 
 // ── Stats overlay ─────────────────────────────────────────────────────────────
-// (Unchanged)
+
 class _StatsOverlay extends StatelessWidget {
   final List<Household> households;
   const _StatsOverlay({required this.households});

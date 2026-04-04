@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart'; // <-- Added Geolocator import
+import 'package:geolocator/geolocator.dart';
 
 import '../../core/constants/api_keys.dart';
 import '../../core/models/asset.dart';
@@ -53,17 +53,16 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     ctrl.animateCamera(CameraUpdate.zoomOut());
   }
 
-  // ── NEW: Go to My Location ────────────────────────────────────────────────
+  // ── Go to My Location ─────────────────────────────────────────────────────
+
   Future<void> goToMyLocation() async {
     try {
-      // 1. Check if location services are enabled
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         debugPrint('Location services are disabled.');
         return;
       }
 
-      // 2. Request permissions
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -77,18 +76,16 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
         return;
       }
 
-      // 3. Get the current position
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // 4. Move the map camera
       final ctrl = await _ctrl;
       ctrl.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: LatLng(position.latitude, position.longitude),
-            zoom: 17.5, // Zooms in close to the user's street level
+            zoom: 17.5,
           ),
         ),
       );
@@ -97,13 +94,54 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     }
   }
 
+  // ── Fit the densest cluster of households in view ────────────────────────
+  //
+  // Instead of fitting ALL pins (which lets a single outlier force a wide
+  // zoom-out), we use a percentile-based bounding box that frames the core
+  // cluster where most pins live and ignores edge outliers.
+
+  Future<void> fitAllHouseholds(List<Household> households) async {
+    if (households.isEmpty) return;
+
+    // 1. Sort latitudes and longitudes independently
+    final lats = households.map((h) => h.latitude).toList()..sort();
+    final lngs = households.map((h) => h.longitude).toList()..sort();
+
+    // 2. Pick the 10th–90th percentile range to exclude outlier pins.
+    //    With only a handful of points this gracefully falls back to
+    //    the full min/max, so it is safe for both small and large datasets.
+    double _percentile(List<double> sorted, double p) {
+      final idx = ((sorted.length - 1) * p).round().clamp(0, sorted.length - 1);
+      return sorted[idx];
+    }
+
+    final minLat = _percentile(lats, 0.10);
+    final maxLat = _percentile(lats, 0.90);
+    final minLng = _percentile(lngs, 0.10);
+    final maxLng = _percentile(lngs, 0.90);
+
+    // 3. Build the cluster bounding box
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    // 4. Animate the camera to frame the cluster with comfortable padding
+    try {
+      final ctrl = await _ctrl;
+      ctrl.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
+    } catch (e) {
+      debugPrint("Error fitting bounds: $e");
+    }
+  }
+
+  // ── 3D / Satellite toggle ─────────────────────────────────────────────────
+
   Future<void> toggle3D() async {
     final ctrl = await _ctrl;
     final next = !state.is3D;
     final cam = state.currentCamera;
 
-    // Switch between satellite (hybrid) and standard map — flat view so
-    // satellite imagery is fully visible without building occlusion.
     state = state.copyWith(
       is3D: next,
       mapType: next ? MapType.hybrid : MapType.normal,
@@ -226,12 +264,10 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
         final encoded = routes[0]['overview_polyline']['points'] as String;
         final points = decodePolyline(encoded);
 
-        // Use actual driving distance from API
         final legs = routes[0]['legs'] as List?;
         double? routeMeters;
         if (legs != null && legs.isNotEmpty) {
-          routeMeters =
-              (legs[0]['distance']['value'] as int).toDouble();
+          routeMeters = (legs[0]['distance']['value'] as int).toDouble();
         }
 
         final polyline = Polyline(
@@ -262,6 +298,8 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     super.dispose();
   }
 }
+
+// ── State ─────────────────────────────────────────────────────────────────────
 
 class MapControllerState {
   final Household? selected;
