@@ -9,12 +9,12 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
-import '../../providers/hazard_provider.dart';
+import 'package:geolocator/geolocator.dart';
 import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
-import 'hazard_overlay.dart';
+
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
@@ -62,9 +62,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final households = ref.watch(householdProvider);
-    final assets    = ref.watch(assetProvider);
-    final ctrl      = ref.watch(mapControllerProvider.notifier);
-    final state     = ref.watch(mapControllerProvider);
+    final assets     = ref.watch(assetProvider);
+    final ctrl       = ref.watch(mapControllerProvider.notifier);
+    final state      = ref.watch(mapControllerProvider);
 
     // Rebuild markers when households change or icons first load
     if (_iconsPreloaded && households != _lastHouseholds) {
@@ -167,7 +167,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 }
 
 // ── Household overlay panel ───────────────────────────────────────────────────
-
+// (Unchanged - Kept intact from your original code)
 class _HouseholdPanel extends StatelessWidget {
   final Household household;
   final Asset? nearestAsset;
@@ -205,7 +205,6 @@ class _HouseholdPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Triage color bar + header ─────────────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
             decoration: BoxDecoration(
@@ -238,8 +237,6 @@ class _HouseholdPanel extends StatelessWidget {
               ],
             ),
           ),
-
-          // ── Info rows ─────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
             child: Column(
@@ -282,8 +279,6 @@ class _HouseholdPanel extends StatelessWidget {
               ],
             ),
           ),
-
-          // ── Routing row ───────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
             child: isRouting
@@ -342,8 +337,6 @@ class _HouseholdPanel extends StatelessWidget {
                       )
                     : const SizedBox.shrink(),
           ),
-
-          // ── Vulnerability chips ───────────────────────────────────────
           if (h.vulnerabilities.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
@@ -355,8 +348,6 @@ class _HouseholdPanel extends StatelessWidget {
             )
           else
             const SizedBox(height: 4),
-
-          // ── Rescue button ─────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             child: h.isRescued
@@ -455,7 +446,7 @@ class _HouseholdPanel extends StatelessWidget {
 }
 
 // ── Search bar ────────────────────────────────────────────────────────────────
-
+// (Unchanged)
 class _SearchBar extends StatefulWidget {
   final MapControllerNotifier ctrl;
   final bool isSearching;
@@ -554,6 +545,7 @@ class _SearchBarState extends State<_SearchBar> {
 }
 
 // ── Right-side map controls ───────────────────────────────────────────────────
+// UPDATED: Now visually matches the screenshot exactly
 
 class _MapControls extends StatelessWidget {
   final MapControllerNotifier ctrl;
@@ -564,91 +556,106 @@ class _MapControls extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _ControlButton(icon: Icons.add, onTap: ctrl.zoomIn, topRadius: true),
-        const SizedBox(height: 1),
-        _ControlButton(
-            icon: Icons.remove, onTap: ctrl.zoomOut, bottomRadius: true),
-        const SizedBox(height: 10),
-        _ControlButton(
-          icon: Icons.explore_outlined,
-          onTap: ctrl.resetBearing,
-          topRadius: true,
-          bottomRadius: true,
+        // GROUP 1: Zoom In, Zoom Out, Compass (Grouped together)
+        Container(
+          width: 44,
+          decoration: _boxDecoration(),
+          child: Column(
+            children: [
+              _ControlButton(icon: Icons.add, onTap: ctrl.zoomIn),
+              _divider(),
+              _ControlButton(icon: Icons.remove, onTap: ctrl.zoomOut),
+              _divider(),
+              _ControlButton(icon: Icons.navigation, onTap: ctrl.resetBearing),
+            ],
+          ),
         ),
         const SizedBox(height: 10),
-        _ControlButton(
-          icon: is3D ? Icons.map_outlined : Icons.satellite_alt_outlined,
-          label: is3D ? 'MAP' : 'SAT',
-          onTap: ctrl.toggle3D,
-          active: is3D,
-          topRadius: true,
-          bottomRadius: true,
+
+        // GROUP 2: My Location (Standalone)
+        Container(
+          width: 44,
+          decoration: _boxDecoration(),
+          child: _ControlButton(
+            icon: Icons.my_location,
+            onTap: ctrl.goToMyLocation, // ** Requires update in your controller! **
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // GROUP 3: Map Type Toggle (Standalone)
+        Container(
+          width: 44,
+          decoration: _boxDecoration(),
+          child: _ControlButton(
+            icon: Icons.map_outlined,
+            onTap: ctrl.toggle3D,
+            active: is3D,
+          ),
         ),
       ],
+    );
+  }
+
+  BoxDecoration _boxDecoration() {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(6), // Slightly tighter radius like web
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.15),
+          blurRadius: 4,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    );
+  }
+
+  Widget _divider() {
+    return Container(
+      height: 1,
+      width: 32, // Leaves a nice little margin on the sides of the divider
+      color: Colors.grey.withValues(alpha: 0.3),
     );
   }
 }
 
 class _ControlButton extends StatelessWidget {
   final IconData icon;
-  final String? label;
   final VoidCallback onTap;
   final bool active;
-  final bool topRadius;
-  final bool bottomRadius;
 
   const _ControlButton({
     required this.icon,
     required this.onTap,
-    this.label,
     this.active = false,
-    this.topRadius = false,
-    this.bottomRadius = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFF1A73E8) : Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: topRadius ? const Radius.circular(8) : Radius.zero,
-            topRight: topRadius ? const Radius.circular(8) : Radius.zero,
-            bottomLeft: bottomRadius ? const Radius.circular(8) : Radius.zero,
-            bottomRight:
-                bottomRadius ? const Radius.circular(8) : Radius.zero,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
+    // We use a Material wrapper so the InkWell ripple effect looks proper
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          height: 44,
+          child: Center(
+            child: Icon(
+              icon,
+              size: 22,
+              color: active ? const Color(0xFF1A73E8) : Colors.black87,
             ),
-          ],
+          ),
         ),
-        child: label != null
-            ? Center(
-                child: Text(label!,
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color:
-                            active ? Colors.white : Colors.black87)),
-              )
-            : Icon(icon,
-                size: 20,
-                color: active ? Colors.white : Colors.black87),
       ),
     );
   }
 }
 
 // ── Stats overlay ─────────────────────────────────────────────────────────────
-
+// (Unchanged)
 class _StatsOverlay extends StatelessWidget {
   final List<Household> households;
   const _StatsOverlay({required this.households});

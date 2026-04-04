@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/models/triage_level.dart';
 
-/// Cache so we only render each icon once per session.
+/// Cache to ensure we only render each icon once per session.
 final _cache = <String, BitmapDescriptor>{};
 
-/// Returns a circular filled marker icon for the given [color].
-/// [size] is the diameter in logical pixels (default 48).
-Future<BitmapDescriptor> circularMarker(Color color, {double size = 48}) async {
+/// Renders a solid circular marker with a white border and shadow, 
+/// matching the L.I.G.T.A.S. Web UI.
+Future<BitmapDescriptor> circularMarker(Color color, {double size = 36}) async {
   final key = '${color.toARGB32()}_$size';
   if (_cache.containsKey(key)) return _cache[key]!;
 
@@ -16,25 +16,28 @@ Future<BitmapDescriptor> circularMarker(Color color, {double size = 48}) async {
   final canvas = Canvas(recorder);
   final r = size / 2;
 
-  // Outer white ring
+  // 1. Draw a subtle Drop Shadow
+  final shadowPaint = Paint()
+    ..color = Colors.black.withOpacity(0.25)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+  canvas.drawCircle(Offset(r, r + 1.5), r - 1, shadowPaint);
+
+  // 2. Draw the Outer White Border
   canvas.drawCircle(
     Offset(r, r),
-    r,
+    r - 1,
     Paint()..color = Colors.white,
   );
 
-  // Coloured fill
+  // 3. Draw the Solid Color Fill
+  // We subtract 2.5 to 3.0 from the radius to leave a clean white ring
   canvas.drawCircle(
     Offset(r, r),
-    r - 3,
-    Paint()..color = color,
-  );
-
-  // Inner white dot
-  canvas.drawCircle(
-    Offset(r, r),
-    r * 0.28,
-    Paint()..color = Colors.white.withValues(alpha: 0.85),
+    r - 3.5,
+    Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true,
   );
 
   final picture = recorder.endRecording();
@@ -46,65 +49,34 @@ Future<BitmapDescriptor> circularMarker(Color color, {double size = 48}) async {
   return desc;
 }
 
-/// Convenience: returns the right marker color for a household.
+/// Helper to get the hex color based on Triage Level
 Color markerColorFor(TriageLevel level, {bool rescued = false}) {
-  if (rescued) return const Color(0xFF238636);
+  if (rescued) return const Color(0xFF238636); // Green
   return level.color;
 }
 
-/// Pre-warm all five triage-level icons so first render is fast.
+/// Pre-warm the icons using the specific hex codes from your web screenshot.
 Future<void> preloadMarkerIcons() async {
   await Future.wait([
-    circularMarker(const Color(0xFFFF4D4D)), // critical
-    circularMarker(const Color(0xFFF39C12)), // high
-    circularMarker(const Color(0xFFF1C40F)), // elevated
-    circularMarker(const Color(0xFF58A6FF)), // stable
-    circularMarker(const Color(0xFF238636)), // rescued
-    pendingPinIcon(),                        // map-pick preview
+    circularMarker(const Color(0xFFFF4D4D)), // Critical (Red)
+    circularMarker(const Color(0xFFF39C12)), // High (Orange)
+    circularMarker(const Color(0xFFF1C40F)), // Elevated (Yellow)
+    circularMarker(const Color(0xFF4A90E2)), // Stable (Blue)
+    circularMarker(const Color(0xFF238636)), // Rescued (Green)
+    pendingPinIcon(),                        // Map-pick preview
   ]);
 }
 
-/// Dashed blue ring with filled center — used for the "pick on map" preview pin.
-Future<BitmapDescriptor> pendingPinIcon({double size = 52}) async {
+/// The "Pending" icon used during registration. 
+/// Updated to be a solid blue dot with a white border to match the theme.
+Future<BitmapDescriptor> pendingPinIcon({double size = 40}) async {
   const key = '__pending__';
   if (_cache.containsKey(key)) return _cache[key]!;
 
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder);
-  final r = size / 2;
-
-  // Outer dashed ring (approximated with arcs)
-  final dashPaint = Paint()
-    ..color = const Color(0xFF58A6FF)
-    ..strokeWidth = 3
-    ..style = PaintingStyle.stroke;
-
-  const dashCount = 8;
-  const gapFraction = 0.4;
-  const twoPi = 6.2832;
-  final dashArc = twoPi / dashCount * (1 - gapFraction);
-  final gapArc  = twoPi / dashCount * gapFraction;
-  double angle = 0;
-  for (int i = 0; i < dashCount; i++) {
-    canvas.drawArc(
-      Rect.fromCircle(center: Offset(r, r), radius: r - 4),
-      angle, dashArc, false, dashPaint,
-    );
-    angle += dashArc + gapArc;
-  }
-
-  // Inner filled dot
-  canvas.drawCircle(
-    Offset(r, r),
-    r * 0.32,
-    Paint()..color = const Color(0xFF58A6FF),
-  );
-
-  final picture = recorder.endRecording();
-  final img = await picture.toImage(size.toInt(), size.toInt());
-  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
-
-  final desc = BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
-  _cache[key] = desc;
-  return desc;
+  // We reuse the circularMarker logic for consistency, 
+  // but we can give it a specific "Pending" blue.
+  final descriptor = await circularMarker(const Color(0xFF58A6FF), size: size);
+  
+  _cache[key] = descriptor;
+  return descriptor;
 }

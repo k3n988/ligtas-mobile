@@ -31,6 +31,20 @@ extension VulnerabilityX on Vulnerability {
     }
   }
 
+  /// Exact string stored in Supabase vuln_arr (matches web types/index.ts)
+  String get webId {
+    switch (this) {
+      case Vulnerability.bedridden:  return 'Bedridden';
+      case Vulnerability.senior:     return 'Senior';
+      case Vulnerability.wheelchair: return 'Wheelchair';
+      case Vulnerability.infant:     return 'Infant';
+      case Vulnerability.pregnant:   return 'Pregnant';
+      case Vulnerability.pwd:        return 'PWD';
+      case Vulnerability.oxygen:     return 'Oxygen';
+      case Vulnerability.dialysis:   return 'Dialysis';
+    }
+  }
+
   /// Which triage level this vulnerability triggers
   TriageLevel get triggersLevel {
     switch (this) {
@@ -69,6 +83,16 @@ extension TriageLevelX on TriageLevel {
       case TriageLevel.high:     return '#f39c12';
       case TriageLevel.elevated: return '#f1c40f';
       case TriageLevel.stable:   return '#58a6ff';
+    }
+  }
+
+  /// Web-compatible color name stored in triage_color_name column
+  String get colorName {
+    switch (this) {
+      case TriageLevel.critical: return 'red';
+      case TriageLevel.high:     return 'orange';
+      case TriageLevel.elevated: return 'yellow';
+      case TriageLevel.stable:   return 'blue';
     }
   }
 

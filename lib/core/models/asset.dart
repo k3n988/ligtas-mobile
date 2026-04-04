@@ -1,5 +1,3 @@
-import 'package:equatable/equatable.dart';
-
 enum AssetStatus { active, dispatching, standby }
 
 extension AssetStatusX on AssetStatus {
@@ -12,7 +10,7 @@ extension AssetStatusX on AssetStatus {
   }
 }
 
-class Asset extends Equatable {
+class Asset {
   final String id;
   final String name;
   final String type;   // "Boat" | "Truck" | "Ambulance"
@@ -86,7 +84,23 @@ class Asset extends Equatable {
     );
   }
 
+  // --- Replaced Equatable with standard Dart Equality ---
   @override
-  List<Object?> get props =>
-      [id, name, type, unit, status, latitude, longitude, icon, capacity];
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is Asset &&
+      other.id == id &&
+      other.name == name &&
+      other.type == type &&
+      other.unit == unit &&
+      other.status == status &&
+      other.latitude == latitude &&
+      other.longitude == longitude &&
+      other.icon == icon &&
+      other.capacity == capacity;
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, type, unit, status, latitude, longitude, icon, capacity);
 }

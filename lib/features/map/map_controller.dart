@@ -3,6 +3,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart'; // <-- Added Geolocator import
+
 import '../../core/constants/api_keys.dart';
 import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
@@ -49,6 +51,50 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
   Future<void> zoomOut() async {
     final ctrl = await _ctrl;
     ctrl.animateCamera(CameraUpdate.zoomOut());
+  }
+
+  // ── NEW: Go to My Location ────────────────────────────────────────────────
+  Future<void> goToMyLocation() async {
+    try {
+      // 1. Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('Location services are disabled.');
+        return;
+      }
+
+      // 2. Request permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          debugPrint('Location permissions are denied');
+          return;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('Location permissions are permanently denied');
+        return;
+      }
+
+      // 3. Get the current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 4. Move the map camera
+      final ctrl = await _ctrl;
+      ctrl.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: LatLng(position.latitude, position.longitude),
+            zoom: 17.5, // Zooms in close to the user's street level
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint("Error getting location: $e");
+    }
   }
 
   Future<void> toggle3D() async {

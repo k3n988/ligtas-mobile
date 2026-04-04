@@ -1,5 +1,5 @@
 class ApiKeys {
-  static const String googleMaps = 'AIzaSyCF8wSBlkgCOl8Z5KlFRHWbk74feeHPQ-4';
+  static const String googleMaps = 'AIzaSyA9tTgie11j1M162zXS6RcZOX0fOQx4bLY';
 
   // Supabase
   static const String supabaseUrl  = 'https://shogulsafkvgqysallqe.supabase.co';

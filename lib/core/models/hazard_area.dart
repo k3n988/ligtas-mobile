@@ -1,5 +1,5 @@
+import 'package:flutter/foundation.dart'; // Added for listEquals
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:equatable/equatable.dart';
 
 enum DisasterType { flood, fire, landslide, storm, earthquake }
 
@@ -37,7 +37,7 @@ extension HazardSeverityX on HazardSeverity {
   }
 }
 
-class HazardArea extends Equatable {
+class HazardArea {
   final String id;
   final String label;
   final DisasterType disasterType;
@@ -52,6 +52,25 @@ class HazardArea extends Equatable {
     required this.polygonPoints,
   });
 
+  // --- Replaced Equatable with standard Dart Equality ---
   @override
-  List<Object?> get props => [id, label, disasterType, severity, polygonPoints];
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is HazardArea &&
+      other.id == id &&
+      other.label == label &&
+      other.disasterType == disasterType &&
+      other.severity == severity &&
+      listEquals(other.polygonPoints, polygonPoints); // Safely compares the lists
+  }
+
+  @override
+  int get hashCode {
+    return id.hashCode ^
+      label.hashCode ^
+      disasterType.hashCode ^
+      severity.hashCode ^
+      Object.hashAll(polygonPoints);
+  }
 }

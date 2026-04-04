@@ -260,6 +260,7 @@ class _HazardFormSheetState extends State<HazardFormSheet> {
               onPressed: widget.points.length < 3
                   ? null
                   : () {
+          
                       final label = _labelController.text.trim().isEmpty
                           ? '${_type.label} Zone ${++_idCounter}'
                           : _labelController.text.trim();

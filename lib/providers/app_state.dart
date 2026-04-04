@@ -36,7 +36,7 @@ class HouseholdNotifier extends StateNotifier<List<Household>> {
       final rows = await _db
           .from('households')
           .select()
-          .order('registered_at', ascending: true);
+          .order('created_at', ascending: true);
       if (mounted) {
         state = rows.map((r) => Household.fromJson(r)).toList();
       }
@@ -55,15 +55,15 @@ class HouseholdNotifier extends StateNotifier<List<Household>> {
   Future<void> markRescued(String id) async {
     await _db
         .from('households')
-        .update({'status': HouseholdStatus.rescued.name})
+        .update({'status': 'Rescued'})   // web uses capitalized 'Rescued'
         .eq('id', id);
   }
 
   Future<void> restorePending(String id) async {
     await _db.from('households').update({
-      'status':           HouseholdStatus.pending.name,
+      'status':            'Pending',    // web uses capitalized 'Pending'
       'assigned_asset_id': null,
-      'dispatched_at':    null,
+      'dispatched_at':     null,
     }).eq('id', id);
   }
 
