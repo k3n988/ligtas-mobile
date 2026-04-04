@@ -7,6 +7,8 @@ import '../features/map/map_screen.dart';
 import '../features/registration/registration_screen.dart';
 import '../features/queue/queue_screen.dart';
 import '../features/assets/assets_screen.dart';
+import '../features/rescuer/rescuer_shell.dart';
+import '../features/citizen/citizen_screen.dart';
 import '../core/theme/app_colors.dart';
 
 // ── Router provider ────────────────────────────────────────────────────────────
@@ -14,31 +16,47 @@ import '../core/theme/app_colors.dart';
 // redirects whenever login / logout happens.
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  // A ChangeNotifier that pings GoRouter whenever auth state changes.
   final authNotifier = _AuthChangeNotifier(ref);
   ref.onDispose(authNotifier.dispose);
 
   return GoRouter(
     initialLocation: '/landing',
     refreshListenable: authNotifier,
-    redirect: (context, state) {
-      final loggedIn   = ref.read(authProvider).isLoggedIn;
-      final onLanding  = state.matchedLocation == '/landing';
+    redirect: (context, routerState) {
+      final auth      = ref.read(authProvider);
+      final location  = routerState.matchedLocation;
+      final onLanding = location == '/landing';
 
-      // Not logged in → always go to landing
-      if (!loggedIn && !onLanding) return '/landing';
-      // Logged in and still on landing → go to main app
-      if (loggedIn && onLanding)   return '/';
+      // ── Not logged in → landing ────────────────────────────────────────
+      if (!auth.isLoggedIn) {
+        return onLanding ? null : '/landing';
+      }
+
+      // ── Logged in on landing → role home ──────────────────────────────
+      if (onLanding) return _homeForRole(auth.role);
+
+      // ── Guard wrong-role routes ────────────────────────────────────────
+      final inRescuer = location.startsWith('/rescuer');
+      final inCitizen = location.startsWith('/citizen');
+      final inAdmin   = !inRescuer && !inCitizen && !onLanding;
+
+      switch (auth.role) {
+        case UserRole.rescuer:
+          if (!inRescuer) return '/rescuer';
+        case UserRole.citizen:
+          if (!inCitizen) return '/citizen';
+        case UserRole.admin:
+          if (!inAdmin) return '/';
+        case UserRole.unknown:
+          return '/landing';
+      }
       return null;
     },
     routes: [
-      // ── Public landing ──────────────────────────────────────────────────
-      GoRoute(
-        path: '/landing',
-        builder: (_, __) => const LandingScreen(),
-      ),
+      // ── Public ─────────────────────────────────────────────────────────
+      GoRoute(path: '/landing', builder: (_, __) => const LandingScreen()),
 
-      // ── Authenticated shell ─────────────────────────────────────────────
+      // ── Admin / LGU shell ───────────────────────────────────────────────
       ShellRoute(
         builder: (context, state, child) => _AppShell(child: child),
         routes: [
@@ -48,9 +66,30 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/dispatch', builder: (_, __) => const AssetsScreen()),
         ],
       ),
+
+      // ── Rescuer shell ───────────────────────────────────────────────────
+      ShellRoute(
+        builder: (context, state, child) => RescuerShell(child: child),
+        routes: [
+          GoRoute(path: '/rescuer',       builder: (_, __) => const MapScreen()),
+          GoRoute(path: '/rescuer/queue', builder: (_, __) => const QueueScreen()),
+        ],
+      ),
+
+      // ── Citizen portal ──────────────────────────────────────────────────
+      GoRoute(path: '/citizen', builder: (_, __) => const CitizenScreen()),
     ],
   );
 });
+
+String _homeForRole(UserRole role) {
+  switch (role) {
+    case UserRole.rescuer: return '/rescuer';
+    case UserRole.citizen: return '/citizen';
+    case UserRole.admin:   return '/';
+    case UserRole.unknown: return '/landing';
+  }
+}
 
 // ── ChangeNotifier bridge ──────────────────────────────────────────────────────
 

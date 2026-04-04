@@ -42,6 +42,9 @@ dependencies:
   # Backend / database
   supabase_flutter: ^2.5.0
 
+  # File / image picking
+  image_picker: ^1.1.2
+
   # Utilities
   freezed_annotation: ^2.4.1
   json_annotation: ^4.9.0

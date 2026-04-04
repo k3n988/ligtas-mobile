@@ -2,32 +2,47 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+// ── Role ──────────────────────────────────────────────────────────────────────
+
+enum UserRole { admin, rescuer, citizen, unknown }
+
 // ── Auth state ────────────────────────────────────────────────────────────────
 
 class AuthState {
   final bool isLoggedIn;
   final bool isLoading;
   final String? username;
+  final UserRole role;
 
   const AuthState({
     this.isLoggedIn = false,
     this.isLoading  = false,
     this.username,
+    this.role = UserRole.unknown,
   });
 
   AuthState copyWith({
-    bool?   isLoggedIn,
-    bool?   isLoading,
-    String? username,
-    bool    clearUsername = false,
+    bool?     isLoggedIn,
+    bool?     isLoading,
+    String?   username,
+    UserRole? role,
+    bool      clearUsername = false,
   }) => AuthState(
     isLoggedIn: isLoggedIn ?? this.isLoggedIn,
     isLoading:  isLoading  ?? this.isLoading,
     username:   clearUsername ? null : (username ?? this.username),
+    role:       role ?? this.role,
   );
 }
 
-// ── Auth notifier — backed by Supabase Auth ───────────────────────────────────
+// ── Test / dev accounts (bypass Supabase for short passwords) ─────────────────
+
+const _testAccounts = {
+  'asset@gmail.com':   (password: '123', role: UserRole.rescuer),
+  'citizen@gmail.com': (password: '123', role: UserRole.citizen),
+};
+
+// ── Auth notifier ─────────────────────────────────────────────────────────────
 
 class AuthNotifier extends StateNotifier<AuthState> {
   AuthNotifier() : super(const AuthState()) {
@@ -38,16 +53,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
   StreamSubscription<dynamic>? _authSub;
 
   void _init() {
-    // Restore session that supabase_flutter persisted on device
     final session = _client.auth.currentSession;
     if (session != null) {
       state = AuthState(
         isLoggedIn: true,
-        username:   session.user.email ?? session.user.phone ?? 'User',
+        username:   session.user.email ?? 'User',
+        role:       _roleFromUser(session.user),
       );
     }
 
-    // Keep in sync with any auth-state changes (token refresh, sign-out, etc.)
     _authSub = _client.auth.onAuthStateChange.listen((data) {
       final user = data.session?.user;
       switch (data.event) {
@@ -57,7 +71,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
           if (user != null) {
             state = AuthState(
               isLoggedIn: true,
-              username:   user.email ?? user.phone ?? 'User',
+              username:   user.email ?? 'User',
+              role:       _roleFromUser(user),
             );
           }
         case AuthChangeEvent.signedOut:
@@ -68,19 +83,38 @@ class AuthNotifier extends StateNotifier<AuthState> {
     });
   }
 
-  // ── Login ────────────────────────────────────────────────────────────────
+  // ── Login ─────────────────────────────────────────────────────────────────
 
   Future<String?> login(String contact, String password) async {
     if (contact.isEmpty || password.isEmpty) return 'Please fill in all fields.';
-    if (password.length < 6) return 'Password must be at least 6 characters.';
 
     state = state.copyWith(isLoading: true);
-    try {
-      await _client.auth.signInWithPassword(
-        email:    contact,
-        password: password,
+
+    // ── Dev bypass for test accounts ─────────────────────────────────────
+    final test = _testAccounts[contact.toLowerCase().trim()];
+    if (test != null) {
+      if (password != test.password) {
+        state = state.copyWith(isLoading: false);
+        return 'Incorrect password.';
+      }
+      state = AuthState(
+        isLoggedIn: true,
+        isLoading:  false,
+        username:   contact,
+        role:       test.role,
       );
-      return null; // success — onAuthStateChange updates the state
+      return null;
+    }
+
+    // ── Real Supabase auth ────────────────────────────────────────────────
+    if (password.length < 6) {
+      state = state.copyWith(isLoading: false);
+      return 'Password must be at least 6 characters.';
+    }
+
+    try {
+      await _client.auth.signInWithPassword(email: contact, password: password);
+      return null;
     } on AuthException catch (e) {
       state = state.copyWith(isLoading: false);
       return _friendlyError(e.message);
@@ -101,13 +135,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final res = await _client.auth.signUp(
         email:    contact,
         password: password,
+        data:     {'role': 'citizen'},
       );
-      // If email confirmation is required, Supabase returns a user but no session
       if (res.session == null) {
         state = state.copyWith(isLoading: false);
-        return 'Account created! Please check your email to confirm, then log in.';
+        return 'Account created! Check your email to confirm, then log in.';
       }
-      return null; // confirmed immediately (email confirm disabled in dashboard)
+      return null;
     } on AuthException catch (e) {
       state = state.copyWith(isLoading: false);
       return _friendlyError(e.message);
@@ -120,18 +154,33 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // ── Logout ────────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
+    // Dev accounts — just clear state
+    if (_testAccounts.containsKey(state.username?.toLowerCase())) {
+      state = const AuthState();
+      return;
+    }
     await _client.auth.signOut();
-    // onAuthStateChange fires signedOut → state reset automatically
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  UserRole _roleFromUser(User user) {
+    final meta = user.userMetadata;
+    final r    = meta?['role'] as String? ?? '';
+    switch (r) {
+      case 'rescuer': return UserRole.rescuer;
+      case 'citizen': return UserRole.citizen;
+      case 'admin':   return UserRole.admin;
+      default:        return UserRole.admin;
+    }
+  }
+
   String _friendlyError(String msg) {
     final m = msg.toLowerCase();
-    if (m.contains('invalid login'))    return 'Incorrect email or password.';
+    if (m.contains('invalid login'))      return 'Incorrect email or password.';
     if (m.contains('already registered')) return 'An account with this email already exists.';
-    if (m.contains('email not confirmed')) return 'Please confirm your email before logging in.';
-    if (m.contains('rate limit'))       return 'Too many attempts. Please wait a moment.';
+    if (m.contains('not confirmed'))      return 'Please confirm your email before logging in.';
+    if (m.contains('rate limit'))         return 'Too many attempts. Please wait a moment.';
     return msg;
   }
 

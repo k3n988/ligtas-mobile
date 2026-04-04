@@ -34,6 +34,9 @@ class Household extends Equatable {
   final String? assignedAssetId;
   final DateTime? dispatchedAt;
   final DateTime registeredAt;
+  final String? approvalStatus; // 'pending' | 'approved' | 'rejected'
+  final String? documentUrl;
+  final String? source; // 'lgu' | 'citizen'
 
   const Household({
     required this.id,
@@ -54,14 +57,17 @@ class Household extends Equatable {
     required this.registeredAt,
     this.assignedAssetId,
     this.dispatchedAt,
+    this.approvalStatus,
+    this.documentUrl,
+    this.source,
   });
 
   // ── Supabase serialisation ──────────────────────────────────────────────────
 
   factory Household.fromJson(Map<String, dynamic> j) => Household(
         id:         j['id'] as String,
-        latitude:   (j['latitude']  as num).toDouble(),
-        longitude:  (j['longitude'] as num).toDouble(),
+        latitude:   (j['lat']  as num).toDouble(),
+        longitude:  (j['lng'] as num).toDouble(),
         city:       j['city']      as String,
         barangay:   j['barangay']  as String,
         purok:      j['purok']     as String? ?? '',
@@ -71,7 +77,7 @@ class Household extends Equatable {
         head:       j['head']      as String,
         contact:    j['contact']   as String? ?? '',
         occupants:  j['occupants'] as int,
-        vulnerabilities: ((j['vulnerabilities'] as List?) ?? [])
+        vulnerabilities: ((j['vuln_arr'] as List?) ?? [])
             .map((e) => Vulnerability.values.firstWhere(
                 (v) => v.name == e, orElse: () => Vulnerability.pwd))
             .toList(),
@@ -80,17 +86,21 @@ class Household extends Equatable {
             (e) => e.name == j['status'], orElse: () => HouseholdStatus.pending),
         triageLevel: TriageLevel.values.firstWhere(
             (e) => e.name == j['triage_level'], orElse: () => TriageLevel.stable),
-        registeredAt:    DateTime.parse(j['registered_at'] as String),
+        registeredAt:    DateTime.parse(
+            (j['created_at'] ?? j['registered_at'] ?? DateTime.now().toIso8601String()) as String),
         assignedAssetId: j['assigned_asset_id'] as String?,
         dispatchedAt:    j['dispatched_at'] != null
             ? DateTime.parse(j['dispatched_at'] as String)
             : null,
+        approvalStatus: j['approval_status'] as String?,
+        documentUrl:    j['document_url']    as String?,
+        source:         j['source']          as String?,
       );
 
   Map<String, dynamic> toJson() => {
         'id':               id,
-        'latitude':         latitude,
-        'longitude':        longitude,
+        'lat':              latitude,
+        'lng':              longitude,
         'city':             city,
         'barangay':         barangay,
         'purok':            purok,
@@ -99,13 +109,15 @@ class Household extends Equatable {
         'head':             head,
         'contact':          contact,
         'occupants':        occupants,
-        'vulnerabilities':  vulnerabilities.map((v) => v.name).toList(),
+        'vuln_arr':         vulnerabilities.map((v) => v.name).toList(),
         'notes':            notes,
         'status':           status.name,
         'triage_level':     triageLevel.name,
-        'registered_at':    registeredAt.toIso8601String(),
         'assigned_asset_id': assignedAssetId,
         'dispatched_at':    dispatchedAt?.toIso8601String(),
+        'approval_status':  approvalStatus,
+        'document_url':     documentUrl,
+        'source':           source,
       };
 
   bool get isRescued => status == HouseholdStatus.rescued;
@@ -130,6 +142,9 @@ class Household extends Equatable {
     DateTime? registeredAt,
     String? assignedAssetId,
     DateTime? dispatchedAt,
+    String? approvalStatus,
+    String? documentUrl,
+    String? source,
     bool clearAssignment = false,
   }) {
     return Household(
@@ -151,6 +166,9 @@ class Household extends Equatable {
       registeredAt: registeredAt ?? this.registeredAt,
       assignedAssetId: clearAssignment ? null : (assignedAssetId ?? this.assignedAssetId),
       dispatchedAt: clearAssignment ? null : (dispatchedAt ?? this.dispatchedAt),
+      approvalStatus: approvalStatus ?? this.approvalStatus,
+      documentUrl: documentUrl ?? this.documentUrl,
+      source: source ?? this.source,
     );
   }
 
@@ -159,5 +177,6 @@ class Household extends Equatable {
         id, latitude, longitude, city, barangay, purok, street,
         structure, head, contact, occupants, vulnerabilities, notes,
         status, triageLevel, registeredAt, assignedAssetId, dispatchedAt,
+        approvalStatus, documentUrl, source,
       ];
 }
