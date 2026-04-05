@@ -1,15 +1,20 @@
 import 'dart:ui' show ImageFilter;
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/constants/api_keys.dart'; // used by _LandingSearchBar
 import '../../core/data/lgu_data.dart';
+import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
+import '../map/legend_widget.dart';
 import '../map/marker_icons.dart';
+import '../map/marker_layer.dart';
 import 'login_modal.dart';
 
 const _initialCamera = CameraPosition(
@@ -97,23 +102,16 @@ class LandingScreen extends ConsumerStatefulWidget {
 }
 
 class _LandingScreenState extends ConsumerState<LandingScreen> {
-  String? _city;
-  String? _barangay;
+  String? _city; // used for hotline city filter
 
   // Map
   GoogleMapController? _mapController;
   Set<Marker> _markers    = {};
   bool        _loadingMap = true;
 
-  // Area status (from area_status table)
-  Map<String, dynamic>? _areaStatus;
-  bool _fetchingStatus = false;
-  bool _noStatusData   = false;
-
-  // Snap positions: collapsed peek | default open | full open
-  static const double _snapMin  = 0.09;
-  static const double _snapMid  = 0.60;
-  static const double _snapFull = 0.84;
+  // ── BINAGO: Snap positions para saktong taas lang at pwedeng ibaba ──
+  static const double _snapMin = 0.12; // Naka-swipe pababa (search bar lang kita)
+  static const double _snapMax = 0.25; // Naka-swipe pataas (sagad hanggang hotlines)
 
   final DraggableScrollableController _sheetCtrl =
       DraggableScrollableController();
@@ -145,49 +143,32 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     );
   }
 
-  Future<void> _fetchAreaStatus(String city, String barangay) async {
-    if (!mounted) return;
-    setState(() { _fetchingStatus = true; _noStatusData = false; _areaStatus = null; });
-    try {
-      final res = await Supabase.instance.client
-          .from('area_status')
-          .select('alert_level, advisory, updated_at')
-          .eq('city', city)
-          .eq('barangay', barangay)
-          .maybeSingle();
-      if (!mounted) return;
-      if (res == null) {
-        setState(() { _noStatusData = true; _fetchingStatus = false; });
-      } else {
-        setState(() { _areaStatus = res; _fetchingStatus = false; });
-      }
-    } catch (_) {
-      if (mounted) setState(() { _noStatusData = true; _fetchingStatus = false; });
-    }
-  }
-
   Future<void> _loadHouseholds() async {
     try {
-      // Fetch all households that have valid coordinates.
-      // No source filter — some existing records may have null source.
-      final rows = await Supabase.instance.client
-          .from('households')
-          .select()
-          .gt('lat', 0);  // only rows with a real coordinate
+      final db = Supabase.instance.client;
+
+      // Fetch households and assets in parallel
+      final results = await Future.wait([
+        db.from('households').select().gt('lat', 0),
+        db.from('assets').select(),
+      ]);
 
       final households = <Household>[];
-      for (final r in rows as List) {
-        try {
-          households.add(Household.fromJson(r));
-        } catch (_) {
-          // skip malformed rows silently
-        }
+      for (final r in results[0] as List) {
+        try { households.add(Household.fromJson(r)); } catch (_) {}
       }
 
-      final markers = await _buildMarkers(households);
+      final assets = <Asset>[];
+      for (final r in results[1] as List) {
+        try { assets.add(Asset.fromJson(r)); } catch (_) {}
+      }
+
+      final householdMarkers = await _buildHouseholdMarkers(households);
+      final assetMarkers     = await buildAssetMarkers(assets);
+
       if (mounted) {
         setState(() {
-          _markers    = markers;
+          _markers    = {...householdMarkers, ...assetMarkers};
           _loadingMap = false;
         });
       }
@@ -196,7 +177,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     }
   }
 
-  Future<Set<Marker>> _buildMarkers(List<Household> households) async {
+  Future<Set<Marker>> _buildHouseholdMarkers(List<Household> households) async {
     final result = <Marker>{};
     for (final h in households) {
       final color = markerColorFor(h.triageLevel, rescued: h.isRescued);
@@ -239,14 +220,11 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final barangays =
-        _city != null ? (cityBarangays[_city] ?? <String>[]) : <String>[];
-
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // ── Full-screen map with live pins ───────────────────────────────
+          // ── Full-screen map ──────────────────────────────────────────────
           Positioned.fill(
             child: GoogleMap(
               initialCameraPosition: _initialCamera,
@@ -263,36 +241,39 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
             ),
           ),
 
-          // Loading spinner while fetching pins
           if (_loadingMap)
             const Positioned(
-              bottom: 120,
-              left: 0, right: 0,
+              bottom: 120, left: 0, right: 0,
               child: Center(
                 child: SizedBox(
                   width: 24, height: 24,
                   child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: AppColors.accent,
-                  ),
+                      strokeWidth: 2.5, color: AppColors.accent),
                 ),
               ),
             ),
 
-          // ── Header overlay (sits on top of map) ──────────────────────────
+          // ── Header ───────────────────────────────────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
             child: _Header(onLoginTap: _openLogin),
           ),
 
+          // ── Legend (bottom-left, above sheet) ────────────────────────────
+          const Positioned(
+            bottom: 90,
+            left: 0,
+            child: LegendWidget(),
+          ),
+
           // ── Draggable info panel ─────────────────────────────────────────
           DraggableScrollableSheet(
             controller: _sheetCtrl,
-            initialChildSize: _snapMid,
-            minChildSize: _snapMin,
-            maxChildSize: _snapFull,
+            initialChildSize: _snapMax, // Ganyan na agad kataas by default
+            minChildSize: _snapMin,     // Hanggang dito lang bababa (Search bar)
+            maxChildSize: _snapMax,     // Hanggang diyan lang ang sagad na taas
             snap: true,
-            snapSizes: const [_snapMin, _snapMid, _snapFull],
+            snapSizes: const [_snapMin, _snapMax], // Dalawang pwesto nalang
             builder: (context, scrollCtrl) {
               return Container(
                 decoration: BoxDecoration(
@@ -309,156 +290,49 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                 ),
                 child: CustomScrollView(
                   controller: scrollCtrl,
+                  // Disable natin yung scrolling sa mismong loob kung sakto na yung content
+                  physics: const ClampingScrollPhysics(),
                   slivers: [
-                    // Sticky drag handle
                     SliverToBoxAdapter(child: _DragHandle()),
-
-                    // Scrollable content
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(14, 4, 14, 40),
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
-                          _SearchHint(),
+                          // ── Functional search bar ────────────────────────
+                          _LandingSearchBar(mapController: _mapController),
                           const SizedBox(height: 14),
-                          _SectionCard(
-                            title: 'CHECK YOUR AREA',
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 6),
-                                Text(
-                                  'Select your city and barangay to see the current status and advisories for your area.',
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 12,
-                                    height: 1.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                _Dropdown(
-                                  hint: '— Select City —',
-                                  value: _city,
-                                  items: negrosOccidentalCities,
-                                  onChanged: (v) {
-                                    setState(() {
-                                      _city = v;
-                                      _barangay = null;
-                                      _areaStatus = null;
-                                      _noStatusData = false;
-                                    });
-                                    if (v != null) _panToCity(v);
-                                  },
-                                ),
-                                const SizedBox(height: 8),
-                                _Dropdown(
-                                  hint: '— Select Barangay —',
-                                  value: _barangay,
-                                  items: barangays,
-                                  onChanged: barangays.isEmpty
-                                      ? null
-                                      : (v) {
-                                          setState(() => _barangay = v);
-                                          if (v != null && _city != null) {
-                                            _fetchAreaStatus(_city!, v);
-                                          }
-                                        },
-                                ),
-                                if (_city != null && _barangay != null) ...[
-                                  const SizedBox(height: 12),
-                                  if (_fetchingStatus)
-                                    const Center(
-                                      child: Padding(
-                                        padding: EdgeInsets.all(8),
-                                        child: SizedBox(
-                                          width: 18, height: 18,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: AppColors.accent),
-                                        ),
-                                      ),
-                                    )
-                                  else if (_noStatusData)
-                                    Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.cardBackground,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: AppColors.divider),
-                                      ),
-                                      child: Text(
-                                        'No status posted yet for $_barangay, $_city.',
-                                        style: const TextStyle(
-                                            color: AppColors.textSecondary,
-                                            fontSize: 12),
-                                      ),
-                                    )
-                                  else if (_areaStatus != null)
-                                    _AlertBanner(status: _areaStatus!),
-                                ],
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          _SectionCard(
-                            title: 'ARE YOU A VULNERABLE HOUSEHOLD?',
-                            titleColor: AppColors.accent,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 6),
-                                Text(
-                                  'Make sure rescuers know you are there. Register seniors, PWDs, bedridden, and infants before a disaster strikes — so they are first on the priority list.',
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 12,
-                                    height: 1.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 14),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: FilledButton(
-                                    onPressed: () =>
-                                        _openLogin(signUp: true),
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: AppColors.accent,
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 14),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8)),
-                                    ),
-                                    child: const Text(
-                                      'REGISTER NOW  →',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        letterSpacing: 0.8,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
+
+                          // ── Emergency Hotlines ───────────────────────────
                           _SectionCard(
                             title: _city != null
                                 ? 'EMERGENCY HOTLINES · $_city'
                                 : 'EMERGENCY HOTLINES',
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const SizedBox(height: 8),
+                                // City picker inside hotlines card
+                                _Dropdown(
+                                  hint: '— Select City —',
+                                  value: _city,
+                                  items: negrosOccidentalCities,
+                                  onChanged: (v) {
+                                    setState(() => _city = v);
+                                    if (v != null) _panToCity(v);
+                                  },
+                                ),
+                                const SizedBox(height: 10),
                                 if (_city != null &&
                                     _hotlines.containsKey(_city))
                                   ..._hotlines[_city]!.map((h) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: _HotlineRow(
-                                      label: h['label']!,
-                                      number: h['number']!,
-                                      highlight: h['number'] == '911',
-                                    ),
-                                  ))
+                                        padding:
+                                            const EdgeInsets.only(bottom: 6),
+                                        child: _HotlineRow(
+                                          label: h['label']!,
+                                          number: h['number']!,
+                                          highlight: h['number'] == '911',
+                                        ),
+                                      ))
                                 else ...[
                                   _HotlineRow(
                                     label: 'National Emergency',
@@ -467,7 +341,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
-                                    'Select your city above to see local DRRMO numbers.',
+                                    'Select your city to see local DRRMO numbers.',
                                     style: TextStyle(
                                       color: AppColors.textMuted,
                                       fontSize: 11,
@@ -697,8 +571,6 @@ class _Header extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
-          // Inilipat natin ang decoration sa labas ng SafeArea 
-          // para sakop ng background color hanggang sa pinakataas ng screen.
           decoration: BoxDecoration(
             color: const Color(0xFF0D1117).withValues(alpha: 0.80),
             border: Border(
@@ -710,33 +582,17 @@ class _Header extends StatelessWidget {
           ),
           child: SafeArea(
             bottom: false,
-            // Ginawang Padding ang dating padding ng Container
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
               child: Row(
                 children: [
-                  // ── Logo with accent ring ──────────────────────────────────
+                  // ── Logo ──────────────────────────────────
                   Container(
                     width: 40,
                     height: 40,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.accent.withValues(alpha: 0.35),
-                        width: 1.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.accent.withValues(alpha: 0.15),
-                          blurRadius: 8,
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: Image.asset(
-                        'asset/logo2.png',
-                        fit: BoxFit.cover,
-                      ),
+                    child: Image.asset(
+                      'asset/logo2.png',
+                      fit: BoxFit.contain, // Makikita na ang buong logo
                     ),
                   ),
                   const SizedBox(width: 11),
@@ -831,7 +687,66 @@ class _Header extends StatelessWidget {
 
 // ── Reusable widgets ──────────────────────────────────────────────────────────
 
-class _SearchHint extends StatelessWidget {
+/// Functional search bar — geocodes the query and pans the map.
+class _LandingSearchBar extends StatefulWidget {
+  final GoogleMapController? mapController;
+  const _LandingSearchBar({required this.mapController});
+
+  @override
+  State<_LandingSearchBar> createState() => _LandingSearchBarState();
+}
+
+class _LandingSearchBarState extends State<_LandingSearchBar> {
+  final _ctrl  = TextEditingController();
+  final _focus = FocusNode();
+  final _dio   = Dio();
+  bool _searching = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    _dio.close();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    final query = _ctrl.text.trim();
+    if (query.isEmpty) return;
+    _focus.unfocus();
+    setState(() => _searching = true);
+    try {
+      final res = await _dio.get(
+        'https://maps.googleapis.com/maps/api/geocode/json',
+        queryParameters: {'address': query, 'key': ApiKeys.googleMaps},
+      );
+      final results = res.data['results'] as List?;
+      if (results != null && results.isNotEmpty && widget.mapController != null) {
+        final loc = results[0]['geometry']['location'];
+        widget.mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(loc['lat'] as double, loc['lng'] as double),
+              zoom: 14,
+            ),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No results found.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Search failed. Check your connection.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -852,23 +767,43 @@ class _SearchHint extends StatelessWidget {
           const SizedBox(width: 14),
           const Icon(Icons.location_on, color: AppColors.accent, size: 20),
           const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Search a place or barangay...',
-              style: TextStyle(color: Colors.black38, fontSize: 14),
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              style: const TextStyle(color: Colors.black87, fontSize: 14),
+              decoration: const InputDecoration(
+                hintText: 'Search a place or barangay...',
+                hintStyle: TextStyle(color: Colors.black38, fontSize: 14),
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _search(),
             ),
           ),
-          Container(
-            width: 46,
-            height: 46,
-            decoration: const BoxDecoration(
-              color: AppColors.accent,
-              borderRadius: BorderRadius.only(
-                topRight: Radius.circular(23),
-                bottomRight: Radius.circular(23),
+          GestureDetector(
+            onTap: _search,
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(
+                color: AppColors.accent,
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(23),
+                  bottomRight: Radius.circular(23),
+                ),
               ),
+              child: _searching
+                  ? const Center(
+                      child: SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.search, color: Colors.white, size: 20),
             ),
-            child: const Icon(Icons.search, color: Colors.white, size: 20),
           ),
         ],
       ),
@@ -878,14 +813,9 @@ class _SearchHint extends StatelessWidget {
 
 class _SectionCard extends StatelessWidget {
   final String title;
-  final Color? titleColor;
   final Widget child;
 
-  const _SectionCard({
-    required this.title,
-    required this.child,
-    this.titleColor,
-  });
+  const _SectionCard({required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -902,8 +832,8 @@ class _SectionCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: TextStyle(
-              color: titleColor ?? AppColors.accent,
+            style: const TextStyle(
+              color: AppColors.accent,
               fontSize: 11,
               fontWeight: FontWeight.w700,
               letterSpacing: 1.2,
@@ -953,84 +883,6 @@ class _Dropdown extends StatelessWidget {
             .map((e) => DropdownMenuItem(value: e, child: Text(e)))
             .toList(),
       ),
-    );
-  }
-}
-
-// ── Alert level banner (matches web GuestPanel alert config) ─────────────────
-
-class _AlertBanner extends StatelessWidget {
-  final Map<String, dynamic> status;
-  const _AlertBanner({required this.status});
-
-  static const _cfg = {
-    'Normal':                 {'icon': '🟢', 'color': Color(0xFF3fb950), 'border': Color(0xFF238636)},
-    'Monitoring':             {'icon': '🟡', 'color': Color(0xFFd29922), 'border': Color(0xFF9e6a03)},
-    'Pre-emptive Evacuation': {'icon': '🔴', 'color': Color(0xFFf85149), 'border': Color(0xFFda3633)},
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final level    = status['alert_level'] as String? ?? 'Normal';
-    final advisory = status['advisory']    as String? ?? '';
-    final updatedAt = status['updated_at'] as String?;
-    final cfg      = _cfg[level] ?? _cfg['Normal']!;
-    final color    = cfg['color'] as Color;
-    final border   = cfg['border'] as Color;
-    final icon     = cfg['icon'] as String;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '$icon  $level',
-                style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 14),
-              ),
-              if (updatedAt != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    'Updated ${DateTime.tryParse(updatedAt)?.toLocal().toString().substring(0, 16) ?? updatedAt}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 10),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (advisory.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.cardBackground,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.divider),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('ACTIVE ADVISORY',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 10, letterSpacing: 1.2)),
-                const SizedBox(height: 6),
-                Text(advisory,
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, height: 1.5)),
-              ],
-            ),
-          ),
-        ],
-      ],
     );
   }
 }

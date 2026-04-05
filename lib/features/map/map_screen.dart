@@ -53,7 +53,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       households: households,
       onTap: (h) => ctrl.selectHousehold(h, assets: assets),
     );
-    final assetMarkers = buildAssetMarkers(assets);
+    final assetMarkers = await buildAssetMarkers(assets);
     if (mounted) {
       setState(() => _markers = {...householdMarkers, ...assetMarkers});
     }

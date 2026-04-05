@@ -106,14 +106,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return null;
     }
 
-    // ── Staff / rescuer login via assets table (contact number) ───────────
-    if (isStaff && _looksLikeContactNumber(contact)) {
-      return _assetLogin(_normaliseContact(contact), password);
-    }
-
-    // ── Citizen login (contact number → households table) ─────────────────
-    if (!isStaff && _looksLikeContactNumber(contact)) {
-      return _citizenLogin(_normaliseContact(contact), password);
+    // ── Contact number: try asset (rescuer) first, then citizen ──────────
+    if (_looksLikeContactNumber(contact)) {
+      final normalised = _normaliseContact(contact);
+      // Try rescuer/asset login first
+      final assetResult = await _tryAssetLogin(normalised, password);
+      if (assetResult == null) return null; // success
+      // Fall back to citizen login
+      return _citizenLogin(normalised, password);
     }
 
     // ── Real Supabase auth (email-based) ──────────────────────────────────
@@ -180,31 +180,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   // ── Asset (rescuer / staff) login via assets table ───────────────────────
 
-  Future<String?> _assetLogin(String contact, String password) async {
+  /// Returns null on success, error string on failure.
+  /// Does NOT set loading=false on failure so caller can fall through to citizen login.
+  Future<String?> _tryAssetLogin(String contact, String password) async {
     try {
       final result = await _client.rpc(
         'verify_asset_login',
         params: {'p_contact': contact, 'p_password': password},
       );
 
-      // RPC returns asset type string ('rescuer', 'admin', etc.) on success, null on failure
-      if (result == null) {
-        state = state.copyWith(isLoading: false);
-        return 'Incorrect contact number or password.';
-      }
+      if (result == null) return 'no_match'; // sentinel — not a user-facing error
 
       final role = (result as String) == 'admin' ? UserRole.admin : UserRole.rescuer;
-
       state = AuthState(
         isLoggedIn: true,
         isLoading:  false,
         username:   contact,
         role:       role,
       );
-      return null;
-    } catch (e) {
-      state = state.copyWith(isLoading: false);
-      return 'Staff login error: $e';
+      return null; // success
+    } catch (_) {
+      return 'error'; // fall through to citizen login
     }
   }
 

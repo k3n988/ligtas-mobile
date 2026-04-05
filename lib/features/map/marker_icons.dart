@@ -3,6 +3,39 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/models/triage_level.dart';
 
+/// Renders an emoji string as a [BitmapDescriptor] for use as a map marker.
+Future<BitmapDescriptor> emojiMarker(String emoji, {double size = 52}) async {
+  final key = 'emoji_${emoji}_$size';
+  if (_cache.containsKey(key)) return _cache[key]!;
+
+  final recorder = ui.PictureRecorder();
+  final canvas   = Canvas(recorder);
+  final r = size / 2;
+
+  // TINANGGAL: White circle background at shadow codes dito.
+
+  // Draw emoji centred in transparent canvas
+  final tp = TextPainter(
+    text: TextSpan(
+      text: emoji,
+      // Pinalaki natin ang font size (mula 0.48 naging 0.75) 
+      // para mas malaki ang mismong sasakyan dahil wala nang puting border.
+      style: TextStyle(fontSize: size * 0.75), 
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  
+  tp.paint(canvas, Offset(r - tp.width / 2, r - tp.height / 2));
+
+  final picture = recorder.endRecording();
+  final img     = await picture.toImage(size.toInt(), size.toInt());
+  final bytes   = await img.toByteData(format: ui.ImageByteFormat.png);
+
+  final desc = BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
+  _cache[key] = desc;
+  return desc;
+}
+
 /// Cache to ensure we only render each icon once per session.
 final _cache = <String, BitmapDescriptor>{};
 
@@ -18,7 +51,7 @@ Future<BitmapDescriptor> circularMarker(Color color, {double size = 36}) async {
 
   // 1. Draw a subtle Drop Shadow
   final shadowPaint = Paint()
-    ..color = Colors.black.withOpacity(0.25)
+    ..color = Colors.black.withValues(alpha: 0.25)
     ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
   canvas.drawCircle(Offset(r, r + 1.5), r - 1, shadowPaint);
 

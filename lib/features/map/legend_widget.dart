@@ -8,39 +8,93 @@ class LegendWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      // Binabaan ko yung bottom margin para hindi masyadong naka-angat
+      margin: const EdgeInsets.only(left: 10, bottom: 0), 
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider),
+        color: const Color(0xFF0D1117).withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF30363D)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 8,
+          ),
+        ],
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _dot(AppColors.critical),
-          _label('Critical'),
-          const SizedBox(width: 10),
-          _dot(AppColors.high),
-          _label('High'),
-          const SizedBox(width: 10),
-          _dot(AppColors.elevated),
-          _label('Elevated'),
-          const SizedBox(width: 10),
-          _dot(AppColors.stable),
-          _label('Stable'),
+          // ── Triage Levels ─────────────────────────────────────────────
+          _section('TRIAGE LEVELS'),
+          _triageRow(AppColors.critical, 'Critical (Immobile)'),
+          _triageRow(AppColors.high,     'High (Limited Mob.)'),
+          _triageRow(AppColors.elevated, 'Elevated (Vuln.)'),
+          _triageRow(const Color(0xFF238636), 'Rescued'),
+
+          const SizedBox(height: 8),
+          
+          // ── Assets (Hardcoded based on screenshot) ───────────────────
+          _section('ASSETS'),
+          _assetRow('🚤', 'Rescue Boat'),
+          _assetRow('🚑', 'Medic Team '),
+          _assetRow('🚒', 'Transport Truck 01'), // Pwede mong palitan yung emoji kung gusto mo
         ],
       ),
     );
   }
 
-  Widget _dot(Color color) => Container(
-        width: 10,
-        height: 10,
-        margin: const EdgeInsets.only(right: 4),
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+  Widget _section(String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.1,
+          ),
+        ),
       );
 
-  Widget _label(String text) =>
-      Text(text, style: AppTextStyles.labelSmall.copyWith(fontSize: 11));
+  Widget _triageRow(Color color, String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: AppTextStyles.labelSmall.copyWith(
+                fontSize: 11,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _assetRow(String icon, String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: AppTextStyles.labelSmall.copyWith(
+                fontSize: 11,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      );
 }
