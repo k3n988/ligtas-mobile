@@ -696,126 +696,131 @@ class _Header extends StatelessWidget {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: SafeArea(
-          bottom: false,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D1117).withValues(alpha: 0.80),
-              border: Border(
-                bottom: BorderSide(
-                  color: AppColors.accent.withValues(alpha: 0.18),
-                  width: 0.5,
-                ),
+        child: Container(
+          // Inilipat natin ang decoration sa labas ng SafeArea 
+          // para sakop ng background color hanggang sa pinakataas ng screen.
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D1117).withValues(alpha: 0.80),
+            border: Border(
+              bottom: BorderSide(
+                color: AppColors.accent.withValues(alpha: 0.18),
+                width: 0.5,
               ),
             ),
-            child: Row(
-              children: [
-                // ── Logo with accent ring ──────────────────────────────────
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: AppColors.accent.withValues(alpha: 0.35),
-                      width: 1.5,
+          ),
+          child: SafeArea(
+            bottom: false,
+            // Ginawang Padding ang dating padding ng Container
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+              child: Row(
+                children: [
+                  // ── Logo with accent ring ──────────────────────────────────
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.35),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.accent.withValues(alpha: 0.15),
+                          blurRadius: 8,
+                        ),
+                      ],
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.accent.withValues(alpha: 0.15),
-                        blurRadius: 8,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'asset/logo2.png',
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+
+                  // ── Title + subtitle ───────────────────────────────────────
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'L.I.G.T.A.S.',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              letterSpacing: 2.5,
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          // Live indicator dot
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3fb950),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF3fb950)
+                                      .withValues(alpha: 0.55),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 1),
+                      const Text(
+                        'Location Intelligence & Geospatial Triage',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 10,
+                          letterSpacing: 0.2,
+                          fontWeight: FontWeight.w400,
+                        ),
                       ),
                     ],
                   ),
-                  child: ClipOval(
-                    child: Image.asset(
-                      'asset/logo2.png',
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 11),
 
-                // ── Title + subtitle ───────────────────────────────────────
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'L.I.G.T.A.S.',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                            letterSpacing: 2.5,
+                  const Spacer(),
+
+                  // ── LOG IN button ──────────────────────────────────────────
+                  GestureDetector(
+                    onTap: onLoginTap,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.35),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
                           ),
-                        ),
-                        const SizedBox(width: 7),
-                        // Live indicator dot
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF3fb950),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF3fb950)
-                                    .withValues(alpha: 0.55),
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      'Location Intelligence & Geospatial Triage',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 10,
-                        letterSpacing: 0.2,
-                        fontWeight: FontWeight.w400,
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-
-                const Spacer(),
-
-                // ── LOG IN button ──────────────────────────────────────────
-                GestureDetector(
-                  onTap: onLoginTap,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.accent.withValues(alpha: 0.35),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
+                      child: const Text(
+                        'LOG IN',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
                         ),
-                      ],
-                    ),
-                    child: const Text(
-                      'LOG IN',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

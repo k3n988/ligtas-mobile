@@ -52,7 +52,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
     final notifier = ref.read(authProvider.notifier);
     final err = _isSignUp
         ? await notifier.signUp(contact, password)
-        : await notifier.login(contact, password);
+        : await notifier.login(contact, password, isStaff: _loginMode == _LoginMode.staff);
 
     if (err != null) {
       setState(() => _error = err);
@@ -176,7 +176,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
                         child: Text(
                           _loginMode == _LoginMode.citizen
                               ? 'Enter the contact number and password issued by the LGU during registration.'
-                              : 'LGU staff (admin / rescuer): sign in with your registered email.',
+                              : 'Rescuers: use your contact number and auto-generated password. Admins: use your registered email.',
                           style: TextStyle(
                             color: _loginMode == _LoginMode.citizen
                                 ? AppColors.accent
@@ -192,13 +192,13 @@ class _LoginModalState extends ConsumerState<LoginModal> {
                 const SizedBox(height: 14),
 
                 // ── Contact / Email field ─────────────────────────────────────
-                _label(_loginMode == _LoginMode.citizen ? 'Contact Number' : 'Email Address'),
+                _label(_loginMode == _LoginMode.citizen ? 'Contact Number' : 'Email or Contact Number'),
                 _field(
                   controller: _contactCtrl,
-                  hint: _loginMode == _LoginMode.citizen ? '09XXXXXXXXX' : 'name@example.com',
+                  hint: _loginMode == _LoginMode.citizen ? '09XXXXXXXXX' : 'name@example.com or 09XXXXXXXXX',
                   keyboardType: _loginMode == _LoginMode.citizen
                       ? TextInputType.phone
-                      : TextInputType.emailAddress,
+                      : TextInputType.text,
                 ),
                 const SizedBox(height: 12),
 
