@@ -49,6 +49,7 @@ dependencies:
   dartz: ^0.10.1
   uuid: 4.5.3        # ✅ Added UUID here
   geolocator: ^14.0.2
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

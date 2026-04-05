@@ -29,6 +29,7 @@ class MapScreen extends ConsumerStatefulWidget {
 class _MapScreenState extends ConsumerState<MapScreen> {
   Set<Marker> _markers = {};
   List<Household> _lastHouseholds = [];
+  List<Asset> _lastAssets = [];
   bool _iconsPreloaded = false;
   bool _hasInitialZoomed = false;
 
@@ -52,8 +53,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       households: households,
       onTap: (h) => ctrl.selectHousehold(h, assets: assets),
     );
+    final assetMarkers = buildAssetMarkers(assets);
     if (mounted) {
-      setState(() => _markers = householdMarkers);
+      setState(() => _markers = {...householdMarkers, ...assetMarkers});
     }
   }
 
@@ -64,9 +66,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final ctrl       = ref.watch(mapControllerProvider.notifier);
     final state      = ref.watch(mapControllerProvider);
 
-    // Rebuild markers when households change or icons first load
-    if (_iconsPreloaded && households != _lastHouseholds) {
+    // Rebuild markers when households or assets change, or icons first load
+    if (_iconsPreloaded &&
+        (households != _lastHouseholds || assets != _lastAssets)) {
       _lastHouseholds = households;
+      _lastAssets = assets;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _rebuildMarkers(households, assets, ctrl);
 
