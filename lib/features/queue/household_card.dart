@@ -7,6 +7,7 @@ import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/triage_badge.dart';
+import '../../features/auth/auth_provider.dart';
 import '../../providers/app_state.dart';
 
 class HouseholdCard extends ConsumerWidget {
@@ -133,52 +134,91 @@ class HouseholdCard extends ConsumerWidget {
             // ── Actions ─────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
-              child: Row(
-                children: [
-                  Text(_timeAgo(h.registeredAt),
-                      style: AppTextStyles.labelSmall),
-                  const Spacer(),
-                  if (!isRescued) ...[
-                    // Locate
-                    _actionBtn(
-                      icon: Icons.location_on_outlined,
-                      label: 'Locate',
-                      color: AppColors.accent,
-                      onTap: () {
-                        ref.read(locateHouseholdProvider.notifier).state =
-                            h.id;
-                        context.go('/');
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    // Dispatch / Reassign
-                    _actionBtn(
-                      icon: Icons.send_outlined,
-                      label: h.isDispatched ? 'Reassign' : 'Dispatch',
-                      color: AppColors.deployed,
-                      onTap: () => _showDispatchSheet(context, ref, h, assets),
-                    ),
-                    const SizedBox(width: 8),
-                    // Mark Rescued
-                    _actionBtn(
-                      icon: Icons.check_circle_outline,
-                      label: 'Rescued',
-                      color: AppColors.stable,
-                      onTap: () => ref
-                          .read(householdProvider.notifier)
-                          .markRescued(h.id),
-                    ),
-                  ] else
-                    _actionBtn(
-                      icon: Icons.undo,
-                      label: 'Restore',
-                      color: AppColors.textSecondary,
-                      onTap: () => ref
-                          .read(householdProvider.notifier)
-                          .restorePending(h.id),
-                    ),
-                ],
-              ),
+              child: Builder(builder: (context) {
+                final isRescuer =
+                    ref.watch(authProvider).role == UserRole.rescuer;
+                return Row(
+                  children: [
+                    Text(_timeAgo(h.registeredAt),
+                        style: AppTextStyles.labelSmall),
+                    const Spacer(),
+                    if (isRescuer) ...[
+                      // Rescuer: full actions for CRITICAL, Mark Rescued for dispatched others
+                      if (!isRescued) ...[
+                        if (h.triageLevel == TriageLevel.critical) ...[
+                          _actionBtn(
+                            icon: Icons.location_on_outlined,
+                            label: 'Locate',
+                            color: AppColors.accent,
+                            onTap: () {
+                              ref
+                                  .read(locateHouseholdProvider.notifier)
+                                  .state = h.id;
+                              context.go('/rescuer');
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          _actionBtn(
+                            icon: Icons.send_outlined,
+                            label: h.isDispatched ? 'Reassign' : 'Dispatch',
+                            color: AppColors.deployed,
+                            onTap: () =>
+                                _showDispatchSheet(context, ref, h, assets),
+                          ),
+                          const SizedBox(width: 8),
+                          _actionBtn(
+                            icon: Icons.check_circle_outline,
+                            label: 'Rescued',
+                            color: AppColors.stable,
+                            onTap: () => ref
+                                .read(householdProvider.notifier)
+                                .markRescued(h.id),
+                          ),
+                        ] else if (h.isDispatched)
+                          _actionBtn(
+                            icon: Icons.check_circle_outline,
+                            label: 'Mark Rescued',
+                            color: AppColors.stable,
+                            onTap: () => ref
+                                .read(householdProvider.notifier)
+                                .markRescued(h.id),
+                          ),
+                      ],
+                    ] else ...[
+                      // Admin/LGU: Locate + Dispatch + Restore (no Mark Rescued)
+                      if (!isRescued) ...[
+                        _actionBtn(
+                          icon: Icons.location_on_outlined,
+                          label: 'Locate',
+                          color: AppColors.accent,
+                          onTap: () {
+                            ref
+                                .read(locateHouseholdProvider.notifier)
+                                .state = h.id;
+                            context.go('/');
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        _actionBtn(
+                          icon: Icons.send_outlined,
+                          label: h.isDispatched ? 'Reassign' : 'Dispatch',
+                          color: AppColors.deployed,
+                          onTap: () =>
+                              _showDispatchSheet(context, ref, h, assets),
+                        ),
+                      ] else
+                        _actionBtn(
+                          icon: Icons.undo,
+                          label: 'Restore',
+                          color: AppColors.textSecondary,
+                          onTap: () => ref
+                              .read(householdProvider.notifier)
+                              .restorePending(h.id),
+                        ),
+                    ],
+                  ],
+                );
+              }),
             ),
           ],
         ),

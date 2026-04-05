@@ -1,9 +1,11 @@
+
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/models/household.dart';
 import '../core/models/asset.dart';
 import '../core/models/triage_level.dart';
+import '../features/auth/auth_provider.dart';
 
 final _db = Supabase.instance.client;
 
@@ -151,3 +153,27 @@ class AssetNotifier extends StateNotifier<List<Asset>> {
 final assetProvider = StateNotifierProvider<AssetNotifier, List<Asset>>(
   (ref) => AssetNotifier(),
 );
+
+/// The asset that belongs to the currently logged-in rescuer (matched by contact).
+final myAssetProvider = Provider<Asset?>((ref) {
+  final username = ref.watch(authProvider).username;
+  if (username == null) return null;
+  final assets = ref.watch(assetProvider);
+  try {
+    return assets.firstWhere(
+      (a) => a.contact != null && a.contact!.trim() == username.trim(),
+    );
+  } catch (_) {
+    return null;
+  }
+});
+
+/// Households dispatched to the current rescuer's asset.
+final myDispatchedHouseholdsProvider = Provider<List<Household>>((ref) {
+  final myAsset = ref.watch(myAssetProvider);
+  if (myAsset == null) return [];
+  final households = ref.watch(householdProvider);
+  return households
+      .where((h) => h.assignedAssetId == myAsset.id && !h.isRescued)
+      .toList();
+});
