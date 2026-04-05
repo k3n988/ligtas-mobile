@@ -8,6 +8,7 @@ import '../features/registration/registration_screen.dart';
 import '../features/queue/queue_screen.dart';
 import '../features/assets/assets_screen.dart';
 import '../features/rescuer/rescuer_shell.dart';
+import '../features/rescuer/rescuer_dashboard.dart';
 import '../features/citizen/citizen_screen.dart';
 import '../core/theme/app_colors.dart';
 
@@ -42,7 +43,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       switch (auth.role) {
         case UserRole.rescuer:
-          if (!inRescuer) return '/rescuer';
+          if (!inRescuer) return '/rescuer/dashboard';
         case UserRole.citizen:
           if (!inCitizen) return '/citizen';
         case UserRole.admin:
@@ -71,8 +72,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ShellRoute(
         builder: (context, state, child) => RescuerShell(child: child),
         routes: [
-          GoRoute(path: '/rescuer',       builder: (_, __) => const MapScreen()),
-          GoRoute(path: '/rescuer/queue', builder: (_, __) => const QueueScreen()),
+          GoRoute(path: '/rescuer/dashboard', builder: (_, __) => const RescuerDashboard()),
+          GoRoute(path: '/rescuer',           builder: (_, __) => const MapScreen()),
+          GoRoute(path: '/rescuer/queue',     builder: (_, __) => const QueueScreen()),
         ],
       ),
 
@@ -84,7 +86,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
 String _homeForRole(UserRole role) {
   switch (role) {
-    case UserRole.rescuer: return '/rescuer';
+    case UserRole.rescuer: return '/rescuer/dashboard';
     case UserRole.citizen: return '/citizen';
     case UserRole.admin:   return '/';
     case UserRole.unknown: return '/landing';

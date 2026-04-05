@@ -9,6 +9,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
+import '../auth/auth_provider.dart';
 import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
@@ -61,10 +62,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final households = ref.watch(householdProvider);
-    final assets     = ref.watch(assetProvider);
-    final ctrl       = ref.watch(mapControllerProvider.notifier);
-    final state      = ref.watch(mapControllerProvider);
+    final households  = ref.watch(householdProvider);
+    final assets      = ref.watch(assetProvider);
+    final ctrl        = ref.watch(mapControllerProvider.notifier);
+    final state       = ref.watch(mapControllerProvider);
+    final isRescuer   = ref.watch(authProvider).role == UserRole.rescuer;
 
     // Rebuild markers when households or assets change, or icons first load
     if (_iconsPreloaded &&
@@ -134,8 +136,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             child: _MapControls(ctrl: ctrl, is3D: state.is3D),
           ),
 
-          // ── Stats overlay ─────────────────────────────────────────────
-          if (state.selected == null)
+          // ── Stats overlay (admin only) ────────────────────────────────
+          if (state.selected == null && !isRescuer)
             Positioned(
               bottom: 70,
               left: 12,
@@ -144,11 +146,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
           // ── Legend ────────────────────────────────────────────────────
           if (state.selected == null)
-            const Positioned(
+            Positioned(
               bottom: 16,
-              left: 0,
-              right: 0,
-              child: Center(child: LegendWidget()),
+              left: isRescuer ? 10 : null,
+              right: isRescuer ? null : 0,
+              child: isRescuer
+                  ? const LegendWidget()
+                  : const Center(child: LegendWidget()),
             ),
 
           // ── Household overlay panel (shown on pin tap) ────────────────

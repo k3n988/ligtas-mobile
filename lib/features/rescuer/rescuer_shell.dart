@@ -21,8 +21,9 @@ class RescuerShell extends ConsumerStatefulWidget {
 class _RescuerShellState extends ConsumerState<RescuerShell> {
   int _locationToIndex(BuildContext context) {
     final loc = GoRouterState.of(context).uri.toString();
-    if (loc.startsWith('/rescuer/queue')) return 1;
-    return 0;
+    if (loc.startsWith('/rescuer/dashboard')) return 0;
+    if (loc.startsWith('/rescuer/queue'))     return 2;
+    return 1; // /rescuer (map)
   }
 
   @override
@@ -46,22 +47,30 @@ class _RescuerShellState extends ConsumerState<RescuerShell> {
       body: Stack(
         children: [
           widget.child,
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
-            right: 12,
-            child: _RescuerBadge(display: display, ref: ref, context: context),
-          ),
+          // Hide badge when on the rescue map to avoid clutter
+          if (idx != 1)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 12,
+              child: _RescuerBadge(display: display, ref: ref, context: context),
+            ),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: idx,
         onDestinationSelected: (i) {
           switch (i) {
-            case 0: context.go('/rescuer');
-            case 1: context.go('/rescuer/queue');
+            case 0: context.go('/rescuer/dashboard');
+            case 1: context.go('/rescuer');
+            case 2: context.go('/rescuer/queue');
           }
         },
         destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
           NavigationDestination(
             icon: Icon(Icons.map_outlined),
             selectedIcon: Icon(Icons.map),
