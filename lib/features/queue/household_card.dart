@@ -180,7 +180,7 @@ class HouseholdCard extends ConsumerWidget {
                         // Mark Rescued — available directly from queue too
                         _actionBtn(
                           icon: Icons.check_circle_outline,
-                          label: 'Rescued',
+                          label: 'Mark Rescued',
                           color: AppColors.stable,
                           onTap: () => ref
                               .read(householdProvider.notifier)
@@ -188,7 +188,7 @@ class HouseholdCard extends ConsumerWidget {
                         ),
                       ],
                     ] else ...[
-                      // Admin/LGU: Locate + Dispatch + Restore (no Mark Rescued)
+                      // Admin/LGU
                       if (!isRescued) ...[
                         _actionBtn(
                           icon: Icons.location_on_outlined,
@@ -208,6 +208,15 @@ class HouseholdCard extends ConsumerWidget {
                           color: AppColors.deployed,
                           onTap: () =>
                               _showDispatchSheet(context, ref, h, assets),
+                        ),
+                        const SizedBox(width: 8),
+                        _actionBtn(
+                          icon: Icons.check_circle_outline,
+                          label: 'Mark Rescued',
+                          color: AppColors.stable,
+                          onTap: () => ref
+                              .read(householdProvider.notifier)
+                              .markRescued(h.id),
                         ),
                       ] else
                         _actionBtn(
