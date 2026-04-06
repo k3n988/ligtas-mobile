@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -108,6 +109,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   GoogleMapController? _mapController;
   Set<Marker> _markers    = {};
   bool        _loadingMap = true;
+  MapType     _mapType    = MapType.normal;
 
   // ── BINAGO: Snap positions para saktong taas lang at pwedeng ibaba ──
   static const double _snapMin = 0.12; // Naka-swipe pababa (search bar lang kita)
@@ -141,6 +143,30 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     _mapController!.animateCamera(
       CameraUpdate.newLatLngZoom(coords, 13),
     );
+  }
+
+  void _zoomIn()  => _mapController?.animateCamera(CameraUpdate.zoomIn());
+  void _zoomOut() => _mapController?.animateCamera(CameraUpdate.zoomOut());
+  void _resetBearing() => _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          const CameraPosition(target: LatLng(10.6765, 122.9509), zoom: 13.5),
+        ),
+      );
+  void _toggleMapType() => setState(() => _mapType =
+      _mapType == MapType.normal ? MapType.satellite : MapType.normal);
+
+  Future<void> _goToMyLocation() async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition();
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 15),
+      );
+    } catch (_) {}
   }
 
   Future<void> _loadHouseholds() async {
@@ -228,7 +254,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
           Positioned.fill(
             child: GoogleMap(
               initialCameraPosition: _initialCamera,
-              mapType: MapType.normal,
+              mapType: _mapType,
               markers: _markers,
               onMapCreated: _onMapCreated,
               myLocationEnabled: false,
@@ -257,6 +283,20 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
           Positioned(
             top: 0, left: 0, right: 0,
             child: _Header(onLoginTap: _openLogin),
+          ),
+
+          // ── Map controls (right side) ─────────────────────────────────────
+          Positioned(
+            right: 12,
+            top: MediaQuery.of(context).padding.top + 76,
+            child: _LandingMapControls(
+              onZoomIn:      _zoomIn,
+              onZoomOut:     _zoomOut,
+              onReset:       _resetBearing,
+              onMyLocation:  _goToMyLocation,
+              onToggleMap:   _toggleMapType,
+              isSatellite:   _mapType == MapType.satellite,
+            ),
           ),
 
           // ── Legend (bottom-left, above sheet) ────────────────────────────
@@ -885,6 +925,85 @@ class _Dropdown extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Landing map controls ──────────────────────────────────────────────────────
+
+class _LandingMapControls extends StatelessWidget {
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onMyLocation;
+  final VoidCallback onToggleMap;
+  final bool isSatellite;
+
+  const _LandingMapControls({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onMyLocation,
+    required this.onToggleMap,
+    required this.isSatellite,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Group 1: Zoom + compass
+        _group([
+          _btn(icon: Icons.add,        onTap: onZoomIn),
+          _divider(),
+          _btn(icon: Icons.remove,     onTap: onZoomOut),
+          _divider(),
+          _btn(icon: Icons.navigation, onTap: onReset),
+        ]),
+        const SizedBox(height: 10),
+        // Group 2: My location
+        _group([_btn(icon: Icons.my_location, onTap: onMyLocation)]),
+        const SizedBox(height: 10),
+        // Group 3: Map type
+        _group([_btn(icon: Icons.map_outlined, onTap: onToggleMap, active: isSatellite)]),
+      ],
+    );
+  }
+
+  Widget _group(List<Widget> children) => Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Column(children: children),
+      );
+
+  Widget _divider() => Container(
+        height: 1, width: 32,
+        color: Colors.grey.withValues(alpha: 0.3),
+      );
+
+  Widget _btn({required IconData icon, required VoidCallback onTap, bool active = false}) =>
+      Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 44,
+            child: Center(
+              child: Icon(icon, size: 22,
+                  color: active ? const Color(0xFF1A73E8) : Colors.black87),
+            ),
+          ),
+        ),
+      );
 }
 
 class _HotlineRow extends StatelessWidget {
