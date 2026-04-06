@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -134,7 +136,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  // ── Citizen login via households table (verified by RPC) ─────────────────
+  // ── Password hashing — mirrors web: SHA-256(plain + 'LIGTAS_SALT_2025') ──
+
+  String _hashPassword(String plain) {
+    final bytes = utf8.encode('${plain}LIGTAS_SALT_2025');
+    return sha256.convert(bytes).toString();
+  }
 
   bool _looksLikeContactNumber(String input) {
     // Strip spaces, dashes, and + so +639... and 09... both match
@@ -154,13 +161,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<String?> _citizenLogin(String contact, String password) async {
     try {
-      final result = await _client.rpc(
-        'verify_citizen_login',
-        params: {'p_contact': contact, 'p_password': password},
-      );
+      final rows = await _client
+          .from('households')
+          .select('citizen_password_hash')
+          .eq('contact', contact)
+          .limit(1);
 
-      // RPC returns true on success, false or null on failure
-      if (result != true) {
+      if (rows.isEmpty) {
+        state = state.copyWith(isLoading: false);
+        return 'Incorrect contact number or password.';
+      }
+
+      final computed = _hashPassword(password);
+      final matched  = rows.any((r) => r['citizen_password_hash'] == computed);
+      if (!matched) {
         state = state.copyWith(isLoading: false);
         return 'Incorrect contact number or password.';
       }
@@ -173,8 +187,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
       return null;
     } catch (e) {
+      // ignore: avoid_print
+      print('[AUTH] _citizenLogin error: $e');
       state = state.copyWith(isLoading: false);
-      return 'Citizen login error: $e';
+      return 'Login failed. Check your connection.';
     }
   }
 
@@ -184,19 +200,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Does NOT set loading=false on failure so caller can fall through to citizen login.
   Future<String?> _tryAssetLogin(String contact, String password) async {
     try {
-      final result = await _client.rpc(
-        'verify_asset_login',
-        params: {'p_contact': contact, 'p_password': password},
-      );
+      final rows = await _client
+          .from('assets')
+          .select('asset_password_hash')
+          .eq('contact', contact);
 
-      if (result == null) return 'no_match'; // sentinel — not a user-facing error
+      if (rows.isEmpty) return 'no_match';
 
-      final role = (result as String) == 'admin' ? UserRole.admin : UserRole.rescuer;
+      final computed = _hashPassword(password);
+      final matched  = rows.any((r) => r['asset_password_hash'] == computed);
+      if (!matched) return 'no_match';
+
       state = AuthState(
         isLoggedIn: true,
         isLoading:  false,
         username:   contact,
-        role:       role,
+        role:       UserRole.rescuer,
       );
       return null; // success
     } catch (_) {

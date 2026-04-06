@@ -97,7 +97,7 @@ class _LoginModalState extends ConsumerState<LoginModal> {
               _label('PASSWORD'),
               _field(
                 controller: _passwordCtrl,
-                hint: 'Min. 6 characters',
+                hint: 'Password from your registration card',
                 obscure: _obscurePassword,
                 onSubmit: _submit,
                 suffixIcon: IconButton(
