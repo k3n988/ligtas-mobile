@@ -77,7 +77,7 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       }
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
       );
 
       final ctrl = await _ctrl;
@@ -110,15 +110,15 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     // 2. Pick the 10th–90th percentile range to exclude outlier pins.
     //    With only a handful of points this gracefully falls back to
     //    the full min/max, so it is safe for both small and large datasets.
-    double _percentile(List<double> sorted, double p) {
+    double percentile(List<double> sorted, double p) {
       final idx = ((sorted.length - 1) * p).round().clamp(0, sorted.length - 1);
       return sorted[idx];
     }
 
-    final minLat = _percentile(lats, 0.10);
-    final maxLat = _percentile(lats, 0.90);
-    final minLng = _percentile(lngs, 0.10);
-    final maxLng = _percentile(lngs, 0.90);
+    final minLat = percentile(lats, 0.10);
+    final maxLat = percentile(lats, 0.90);
+    final minLng = percentile(lngs, 0.10);
+    final maxLng = percentile(lngs, 0.90);
 
     // 3. Build the cluster bounding box
     final bounds = LatLngBounds(

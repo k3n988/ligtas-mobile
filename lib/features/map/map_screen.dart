@@ -37,6 +37,46 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void initState() {
     super.initState();
     _preload();
+    // Provider values set BEFORE this screen mounted are missed by ref.listen
+    // (which only fires on *changes*). Read them once on the first frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingActions());
+  }
+
+  /// Called once after mount and also by ref.listen for subsequent changes.
+  void _handleLocate(String id) {
+    ref.read(locateHouseholdProvider.notifier).state = null;
+    final households = ref.read(householdProvider);
+    final ctrl       = ref.read(mapControllerProvider.notifier);
+    try {
+      final h = households.firstWhere((hh) => hh.id == id);
+      // panToHousehold: satellite, zoom 19, sets selected → panel shows, NO route
+      ctrl.panToHousehold(h);
+    } catch (_) {}
+  }
+
+  void _handleDispatch(String id) {
+    ref.read(dispatchHouseholdProvider.notifier).state = null;
+    final households = ref.read(householdProvider);
+    final ctrl       = ref.read(mapControllerProvider.notifier);
+    try {
+      final h = households.firstWhere((hh) => hh.id == id);
+      // selectHouseholdAndRouteFromGps: zoom 15.5, sets selected → panel shows + GPS route
+      ctrl.selectHouseholdAndRouteFromGps(h);
+    } catch (_) {}
+  }
+
+  void _handlePendingActions() {
+    if (!mounted) return;
+    final locateId   = ref.read(locateHouseholdProvider);
+    final dispatchId = ref.read(dispatchHouseholdProvider);
+    // Small delay so GoogleMap.onMapCreated finishes before we animate
+    if (locateId != null || dispatchId != null) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        if (locateId   != null) _handleLocate(locateId);
+        if (dispatchId != null) _handleDispatch(dispatchId);
+      });
+    }
   }
 
   Future<void> _preload() async {
@@ -61,24 +101,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final households  = ref.watch(householdProvider);
-    final assets      = ref.watch(assetProvider);
-    final ctrl        = ref.watch(mapControllerProvider.notifier);
-    final state       = ref.watch(mapControllerProvider);
-    final isRescuer   = ref.watch(authProvider).role == UserRole.rescuer;
+    final households = ref.watch(householdProvider);
+    final assets     = ref.watch(assetProvider);
+    final ctrl       = ref.watch(mapControllerProvider.notifier);
+    final mapState   = ref.watch(mapControllerProvider);
+    final isRescuer  = ref.watch(authProvider).role == UserRole.rescuer;
 
-    // Rebuild markers when households or assets change, or icons first load
+    // Rebuild markers when data changes or icons first load
     if (_iconsPreloaded &&
         (households != _lastHouseholds || assets != _lastAssets)) {
       _lastHouseholds = households;
-      _lastAssets = assets;
+      _lastAssets     = assets;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _rebuildMarkers(households, assets, ctrl);
-
-        // Auto-zoom to fit all pins ONLY on the first successful load
         if (!_hasInitialZoomed && households.isNotEmpty) {
           _hasInitialZoomed = true;
-          // Small delay so the map layout finishes rendering first
           Future.delayed(const Duration(milliseconds: 300), () {
             ctrl.fitAllHouseholds(households);
           });
@@ -86,25 +123,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     }
 
-    // Locate — pan & zoom to household only (no route)
-    ref.listen(locateHouseholdProvider, (_, id) {
-      if (id == null) return;
-      try {
-        final h = households.firstWhere((hh) => hh.id == id);
-        ctrl.panToHousehold(h);
-      } catch (_) {}
-      ref.read(locateHouseholdProvider.notifier).state = null;
-    });
-
-    // Dispatch — pan to household + draw GPS route
-    ref.listen(dispatchHouseholdProvider, (_, id) {
-      if (id == null) return;
-      try {
-        final h = households.firstWhere((hh) => hh.id == id);
-        ctrl.selectHouseholdAndRouteFromGps(h);
-      } catch (_) {}
-      ref.read(dispatchHouseholdProvider.notifier).state = null;
-    });
+    // Listen for locate/dispatch triggered while screen is already mounted
+    ref.listen<String?>(locateHouseholdProvider,   (_, id) { if (id != null) _handleLocate(id);   });
+    ref.listen<String?>(dispatchHouseholdProvider, (_, id) { if (id != null) _handleDispatch(id); });
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -117,8 +138,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             onMapCreated: ctrl.onMapCreated,
             onCameraMove: ctrl.onCameraMove,
             markers: _markers,
-            polylines: state.polylines,
-            mapType: state.mapType,
+            polylines: mapState.polylines,
+            mapType: mapState.mapType,
             style: _cleanMapStyle,
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
@@ -134,7 +155,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: _SearchBar(ctrl: ctrl, isSearching: state.isSearching),
+              child: _SearchBar(ctrl: ctrl, isSearching: mapState.isSearching),
             ),
           ),
 
@@ -142,11 +163,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           Positioned(
             right: 12,
             top: MediaQuery.of(context).padding.top + 76,
-            child: _MapControls(ctrl: ctrl, is3D: state.is3D),
+            child: _MapControls(ctrl: ctrl, is3D: mapState.is3D),
           ),
 
           // ── Stats overlay (admin only) ────────────────────────────────
-          if (state.selected == null && !isRescuer)
+          if (mapState.selected == null && !isRescuer)
             Positioned(
               bottom: 70,
               left: 12,
@@ -154,7 +175,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
 
           // ── Legend ────────────────────────────────────────────────────
-          if (state.selected == null)
+          if (mapState.selected == null)
             Positioned(
               bottom: 16,
               left: isRescuer ? 10 : null,
@@ -165,21 +186,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
 
           // ── Household overlay panel (shown on pin tap) ────────────────
-          if (state.selected != null)
+          if (mapState.selected != null)
             Positioned(
               left: 14,
               right: 14,
               bottom: 16,
               child: _HouseholdPanel(
-                household: state.selected!,
-                nearestAsset: state.nearestAsset,
-                routeMeters: state.routeDistanceMeters,
-                isRouting: state.isRouting,
+                household: mapState.selected!,
+                nearestAsset: mapState.nearestAsset,
+                routeMeters: mapState.routeDistanceMeters,
+                isRouting: mapState.isRouting,
                 onClose: () => ctrl.selectHousehold(null),
                 onRescue: () {
                   ref
                       .read(householdProvider.notifier)
-                      .markRescued(state.selected!.id);
+                      .markRescued(mapState.selected!.id);
                   ctrl.selectHousehold(null);
                 },
               ),
