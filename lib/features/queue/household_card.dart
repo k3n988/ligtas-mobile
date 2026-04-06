@@ -143,46 +143,49 @@ class HouseholdCard extends ConsumerWidget {
                         style: AppTextStyles.labelSmall),
                     const Spacer(),
                     if (isRescuer) ...[
-                      // Rescuer: full actions for CRITICAL, Mark Rescued for dispatched others
                       if (!isRescued) ...[
-                        if (h.triageLevel == TriageLevel.critical) ...[
-                          _actionBtn(
-                            icon: Icons.location_on_outlined,
-                            label: 'Locate',
-                            color: AppColors.accent,
-                            onTap: () {
-                              ref
-                                  .read(locateHouseholdProvider.notifier)
-                                  .state = h.id;
+                        // Locate — pan map to household
+                        _actionBtn(
+                          icon: Icons.location_on_outlined,
+                          label: 'Locate',
+                          color: AppColors.accent,
+                          onTap: () {
+                            ref.read(locateHouseholdProvider.notifier).state = h.id;
+                            context.go('/rescuer');
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        // Dispatch — auto-assign to rescuer's own asset → map + GPS route
+                        _actionBtn(
+                          icon: Icons.send_outlined,
+                          label: h.isDispatched ? 'En Route' : 'Dispatch',
+                          color: AppColors.deployed,
+                          onTap: () {
+                            final myAsset = ref.read(myAssetProvider);
+                            if (myAsset != null) {
+                              ref.read(householdProvider.notifier)
+                                  .dispatchRescue(h.id, myAsset.id);
+                              ref.read(assetProvider.notifier)
+                                  .updateStatus(myAsset.id, AssetStatus.dispatching);
+                              ref.read(dispatchHouseholdProvider.notifier).state = h.id;
                               context.go('/rescuer');
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          _actionBtn(
-                            icon: Icons.send_outlined,
-                            label: h.isDispatched ? 'Reassign' : 'Dispatch',
-                            color: AppColors.deployed,
-                            onTap: () =>
-                                _showDispatchSheet(context, ref, h, assets),
-                          ),
-                          const SizedBox(width: 8),
-                          _actionBtn(
-                            icon: Icons.check_circle_outline,
-                            label: 'Rescued',
-                            color: AppColors.stable,
-                            onTap: () => ref
-                                .read(householdProvider.notifier)
-                                .markRescued(h.id),
-                          ),
-                        ] else if (h.isDispatched)
-                          _actionBtn(
-                            icon: Icons.check_circle_outline,
-                            label: 'Mark Rescued',
-                            color: AppColors.stable,
-                            onTap: () => ref
-                                .read(householdProvider.notifier)
-                                .markRescued(h.id),
-                          ),
+                            } else {
+                              // No linked asset — fall back to picker
+                              _showDispatchSheet(context, ref, h, assets,
+                                  navigateTo: '/rescuer');
+                            }
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        // Mark Rescued — available directly from queue too
+                        _actionBtn(
+                          icon: Icons.check_circle_outline,
+                          label: 'Rescued',
+                          color: AppColors.stable,
+                          onTap: () => ref
+                              .read(householdProvider.notifier)
+                              .markRescued(h.id),
+                        ),
                       ],
                     ] else ...[
                       // Admin/LGU: Locate + Dispatch + Restore (no Mark Rescued)
@@ -290,8 +293,9 @@ class HouseholdCard extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     Household h,
-    List<Asset> assets,
-  ) {
+    List<Asset> assets, {
+    String? navigateTo,
+  }) {
     final available =
         assets.where((a) => a.isAvailable || a.id == h.assignedAssetId).toList();
 
@@ -340,6 +344,10 @@ class HouseholdCard extends ConsumerWidget {
                           .read(assetProvider.notifier)
                           .updateStatus(a.id, AssetStatus.dispatching);
                       Navigator.pop(ctx);
+                      if (navigateTo != null) {
+                        ref.read(dispatchHouseholdProvider.notifier).state = h.id;
+                        context.go(navigateTo);
+                      }
                     },
                   )),
           ],

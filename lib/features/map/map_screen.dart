@@ -6,7 +6,6 @@ import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../core/utils/map_utils.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
 import '../auth/auth_provider.dart';
@@ -87,14 +86,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     }
 
-    // Pan to household when "Locate" tapped from Queue / Assets
+    // Locate — pan & zoom to household only (no route)
     ref.listen(locateHouseholdProvider, (_, id) {
       if (id == null) return;
       try {
-        final h = households.firstWhere((h) => h.id == id);
-        ctrl.selectHousehold(h, assets: assets);
+        final h = households.firstWhere((hh) => hh.id == id);
+        ctrl.panToHousehold(h);
       } catch (_) {}
       ref.read(locateHouseholdProvider.notifier).state = null;
+    });
+
+    // Dispatch — pan to household + draw GPS route
+    ref.listen(dispatchHouseholdProvider, (_, id) {
+      if (id == null) return;
+      try {
+        final h = households.firstWhere((hh) => hh.id == id);
+        ctrl.selectHouseholdAndRouteFromGps(h);
+      } catch (_) {}
+      ref.read(dispatchHouseholdProvider.notifier).state = null;
     });
 
     return Scaffold(
@@ -260,37 +269,91 @@ class _HouseholdPanel extends StatelessWidget {
                 _row('ID:', h.id),
                 _row(
                   'Loc:',
-                  '${h.barangay}, ${h.city}'
-                  '${h.purok.isNotEmpty ? ' · Purok ${h.purok}' : ''}'
-                  '${h.street.isNotEmpty ? '\n${h.street}' : ''}',
+                  [
+                    if (h.street.isNotEmpty) h.street,
+                    if (h.barangay.isNotEmpty) 'brgy. ${h.barangay.toLowerCase()}',
+                    h.city.toLowerCase(),
+                  ].join(', '),
                 ),
                 _row(
                   'Occupants: ${h.occupants}',
-                  '  |  Structure: ${h.structure.name}',
+                  '  |  Structure: ${h.structure.label}',
                   plain: true,
                 ),
                 if (h.contact.isNotEmpty) _row('Contact:', h.contact),
-                if (h.notes.isNotEmpty)
+                // Source (blue)
+                if (h.source != null && h.source!.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Notes:  ',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.textSecondary)),
+                        Text('Source:  ',
+                            style: AppTextStyles.bodyMedium
+                                .copyWith(color: AppColors.textSecondary)),
                         Expanded(
                           child: Text(
-                            h.notes,
+                            h.source!,
                             style: AppTextStyles.bodyMedium.copyWith(
-                              color: AppColors.textSecondary,
-                              fontStyle: FontStyle.italic,
-                            ),
+                                color: const Color(0xFF58A6FF)),
                           ),
                         ),
                       ],
                     ),
                   ),
+                // Notes — always shown ("None" when empty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Notes:  ',
+                          style: AppTextStyles.bodyMedium
+                              .copyWith(color: AppColors.textSecondary)),
+                      Expanded(
+                        child: Text(
+                          h.notes.isEmpty ? 'None' : h.notes,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: AppColors.textSecondary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Status badge
+                if (!h.isRescued) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: h.isDispatched
+                          ? const Color(0xFFF0A500).withValues(alpha: 0.10)
+                          : const Color(0xFF8B949E).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: h.isDispatched
+                            ? const Color(0xFFF0A500).withValues(alpha: 0.5)
+                            : AppColors.divider,
+                      ),
+                    ),
+                    child: Text(
+                      h.isDispatched
+                          ? '🚨  Status: Waiting for Responder'
+                          : '⏳  Status: Pending Dispatch',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: h.isDispatched
+                            ? const Color(0xFFF0A500)
+                            : AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
               ],
             ),
           ),
@@ -314,6 +377,7 @@ class _HouseholdPanel extends StatelessWidget {
                     ],
                   )
                 : nearestAsset != null
+                    // Asset-based route
                     ? Row(
                         children: [
                           Text(nearestAsset!.icon,
@@ -332,25 +396,28 @@ class _HouseholdPanel extends StatelessWidget {
                             ),
                           ),
                           if (routeMeters != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1A73E8)
-                                    .withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                formatDistance(routeMeters!),
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF1A73E8)),
-                              ),
-                            ),
+                            _distancePill(routeMeters!, const Color(0xFF1A73E8)),
                         ],
                       )
-                    : const SizedBox.shrink(),
+                    // GPS route (rescuer dispatched from queue)
+                    : routeMeters != null
+                        ? Row(
+                            children: [
+                              const Icon(Icons.my_location,
+                                  size: 15, color: Color(0xFF4CAF50)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Routing from your location',
+                                  style: AppTextStyles.bodyMedium.copyWith(
+                                      color: const Color(0xFF4CAF50),
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              _distancePill(routeMeters!, const Color(0xFF4CAF50)),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
           ),
           if (h.vulnerabilities.isNotEmpty)
             Padding(
@@ -402,6 +469,24 @@ class _HouseholdPanel extends StatelessWidget {
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _distancePill(double meters, Color color) {
+    final text = meters >= 1000
+        ? '${(meters / 1000).toStringAsFixed(1)} km'
+        : '${meters.round()} m';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w600, color: color),
       ),
     );
   }

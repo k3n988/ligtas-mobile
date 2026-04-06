@@ -100,9 +100,13 @@ final queueProvider = Provider<List<Household>>((ref) {
   return [...pending, ...rescued];
 });
 
-// ── Locate (pan map to household) ─────────────────────────────────────────────
+// ── Locate (pan map to household — no route) ──────────────────────────────────
 
 final locateHouseholdProvider = StateProvider<String?>((ref) => null);
+
+// ── Dispatch (pan map + draw GPS route to household) ──────────────────────────
+
+final dispatchHouseholdProvider = StateProvider<String?>((ref) => null);
 
 // ── Asset ─────────────────────────────────────────────────────────────────────
 

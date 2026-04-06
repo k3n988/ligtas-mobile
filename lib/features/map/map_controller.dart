@@ -216,6 +216,8 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
         clearPolylines: true,
         clearNearestAsset: true,
         clearRouteDistance: true,
+        is3D: false,
+        mapType: MapType.normal,
       );
       return;
     }
@@ -230,6 +232,101 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
 
     if (assets != null && assets.isNotEmpty) {
       await loadRoute(h, assets);
+    }
+  }
+
+  // ── Pan to household without drawing a route ─────────────────────────────
+
+  Future<void> panToHousehold(Household h) async {
+    // Switch to satellite + close zoom so rescuer can see the exact building
+    state = state.copyWith(
+      selected: h,
+      is3D: true,
+      mapType: MapType.hybrid,
+      clearPolylines: true,
+      clearNearestAsset: true,
+      clearRouteDistance: true,
+    );
+    final ctrl = await _ctrl;
+    ctrl.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 19.0),
+      ),
+    );
+  }
+
+  // ── Pan to household + draw route from rescuer's live GPS ─────────────────
+
+  Future<void> selectHouseholdAndRouteFromGps(Household h) async {
+    state = state.copyWith(
+      selected: h,
+      clearPolylines: true,
+      clearNearestAsset: true,
+      clearRouteDistance: true,
+    );
+    final ctrl = await _ctrl;
+    ctrl.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 15.5),
+      ),
+    );
+
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+
+      state = state.copyWith(isRouting: true);
+
+      final response = await _dio.get(
+        'https://maps.googleapis.com/maps/api/directions/json',
+        queryParameters: {
+          'origin':      '${pos.latitude},${pos.longitude}',
+          'destination': '${h.latitude},${h.longitude}',
+          'key':         ApiKeys.googleMaps,
+          'mode':        'driving',
+        },
+      );
+
+      final routes = response.data['routes'] as List?;
+      if (routes == null || routes.isEmpty) {
+        state = state.copyWith(isRouting: false);
+        return;
+      }
+
+      final encoded = routes[0]['overview_polyline']['points'] as String;
+      final points  = decodePolyline(encoded);
+
+      double? routeMeters;
+      final legs = routes[0]['legs'] as List?;
+      if (legs != null && legs.isNotEmpty) {
+        routeMeters = (legs[0]['distance']['value'] as int).toDouble();
+      }
+
+      state = state.copyWith(
+        isRouting: false,
+        polylines: {
+          Polyline(
+            polylineId: const PolylineId('gps_route'),
+            points: points,
+            color: const Color(0xFF4CAF50),
+            width: 5,
+            patterns: [],
+          ),
+        },
+        routeDistanceMeters: routeMeters,
+      );
+    } catch (_) {
+      state = state.copyWith(isRouting: false);
     }
   }
 
