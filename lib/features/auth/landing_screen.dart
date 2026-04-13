@@ -1,4 +1,4 @@
-import 'dart:ui' show ImageFilter;
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,24 +6,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../../core/constants/api_keys.dart'; // used by _LandingSearchBar
+
+import '../../core/constants/api_keys.dart';
 import '../../core/data/lgu_data.dart';
 import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
-import '../../core/models/triage_level.dart';
-import '../../core/theme/app_colors.dart';
 import '../map/legend_widget.dart';
-import '../map/marker_icons.dart';
 import '../map/marker_layer.dart';
 import 'login_modal.dart';
+
+// ── Web Design System Colors (Light Mode Extracted from Screenshots) ──
+const _bgBase = Color(0xFFF0F4F8);       // Light grayish-blue background for the sheet
+const _bgSurface = Colors.white;         // White cards and inputs
+const _border = Color(0xFFE2E8F0);       // Light borders
+const _criticalRed = Color(0xFFDC2626);  // Header bottom border & alerts
+const _accentBlue = Color(0xFF0A67D0);   // Primary buttons (Login, Search)
+const _textPrimary = Color(0xFF1E293B);  // Dark text for headings
+const _textMuted = Color(0xFF64748B);    // Gray text for subtitles
+const _volcanoGradientStart = Color(0xFFFFF0E5); 
+const _volcanoGradientEnd = Color(0xFFFFFBEB);
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
   zoom: 10.5,
 );
 
-// City centre coordinates for map panning
 const Map<String, LatLng> _cityCoords = {
   'Bacolod City':    LatLng(10.6765, 122.9509),
   'Bago City':       LatLng(10.5369, 122.8362),
@@ -39,58 +46,9 @@ const Map<String, LatLng> _cityCoords = {
   'Victorias City':  LatLng(10.9025, 123.0770),
 };
 
-// Detailed hotlines per city — mirrors web GuestPanel.tsx
 const Map<String, List<Map<String, String>>> _hotlines = {
   'Bacolod City': [
     {'label': 'CDRRMO',             'number': '(034) 434-0116'},
-    {'label': 'BFP Bacolod',        'number': '(034) 432-5401'},
-    {'label': 'PNP Bacolod',        'number': '(034) 433-3060'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Talisay City': [
-    {'label': 'MDRRMO Talisay',     'number': '(034) 495-0114'},
-    {'label': 'BFP Talisay',        'number': '(034) 495-0888'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Silay City': [
-    {'label': 'MDRRMO Silay',       'number': '(034) 495-5270'},
-    {'label': 'BFP Silay',          'number': '(034) 495-5116'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Bago City': [
-    {'label': 'CDRRMO Bago',        'number': '(034) 461-0333'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Cadiz City': [
-    {'label': 'MDRRMO Cadiz',       'number': '(034) 493-0365'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Escalante City': [
-    {'label': 'MDRRMO Escalante',   'number': '(034) 454-0011'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Himamaylan City': [
-    {'label': 'MDRRMO Himamaylan',  'number': '(034) 388-2154'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Kabankalan City': [
-    {'label': 'CDRRMO Kabankalan',  'number': '(034) 471-2063'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'La Carlota City': [
-    {'label': 'MDRRMO La Carlota',  'number': '(034) 460-0335'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Sagay City': [
-    {'label': 'CDRRMO Sagay',       'number': '(034) 488-0333'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'San Carlos City': [
-    {'label': 'CDRRMO San Carlos',  'number': '(034) 312-5240'},
-    {'label': 'National Emergency', 'number': '911'},
-  ],
-  'Victorias City': [
-    {'label': 'MDRRMO Victorias',   'number': '(034) 399-2100'},
     {'label': 'National Emergency', 'number': '911'},
   ],
 };
@@ -103,28 +61,64 @@ class LandingScreen extends ConsumerStatefulWidget {
 }
 
 class _LandingScreenState extends ConsumerState<LandingScreen> {
-  String? _city; // used for hotline city filter
+  String? _city;
 
-  // Map
   GoogleMapController? _mapController;
   Set<Marker> _markers    = {};
-  bool        _loadingMap = true;
   MapType     _mapType    = MapType.normal;
 
-  // ── BINAGO: Snap positions para saktong taas lang at pwedeng ibaba ──
-  static const double _snapMin = 0.12; // Naka-swipe pababa (search bar lang kita)
-  static const double _snapMax = 0.25; // Naka-swipe pataas (sagad hanggang hotlines)
+  // ── Volcano Coordinates & Hazard Rings ──
+  final LatLng _volcanoCoords = const LatLng(10.4102, 123.1300);
 
-  final DraggableScrollableController _sheetCtrl =
-      DraggableScrollableController();
+  Set<Circle> get _hazardRings {
+    return {
+      Circle(
+        circleId: const CircleId('critical_1km'),
+        center: _volcanoCoords,
+        radius: 1000, // 1km
+        strokeColor: Colors.red,
+        strokeWidth: 2,
+        fillColor: Colors.red.withValues(alpha: 0.1),
+      ),
+      Circle(
+        circleId: const CircleId('high_3km'),
+        center: _volcanoCoords,
+        radius: 3000, 
+        strokeColor: Colors.orange,
+        strokeWidth: 2,
+        fillColor: Colors.transparent,
+      ),
+      Circle(
+        circleId: const CircleId('elevated_5km'),
+        center: _volcanoCoords,
+        radius: 5000,
+        strokeColor: Colors.amber,
+        strokeWidth: 2,
+        fillColor: Colors.transparent,
+      ),
+      Circle(
+        circleId: const CircleId('stable_10km'),
+        center: _volcanoCoords,
+        radius: 10000,
+        strokeColor: Colors.blue,
+        strokeWidth: 2,
+        fillColor: Colors.transparent,
+      ),
+    };
+  }
+
+  static const double _snapMin = 0.11; 
+  static const double _snapMax = 0.85;
+
+  final DraggableScrollableController _sheetCtrl = DraggableScrollableController();
 
   @override
   void initState() {
     super.initState();
     _loadHouseholds();
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor:      Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark, 
     ));
   }
 
@@ -140,9 +134,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   void _panToCity(String city) {
     final coords = _cityCoords[city];
     if (coords == null || _mapController == null) return;
-    _mapController!.animateCamera(
-      CameraUpdate.newLatLngZoom(coords, 13),
-    );
+    _mapController!.animateCamera(CameraUpdate.newLatLngZoom(coords, 13));
   }
 
   void _zoomIn()  => _mapController?.animateCamera(CameraUpdate.zoomIn());
@@ -171,73 +163,56 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
 
   Future<void> _loadHouseholds() async {
     try {
-      final db = Supabase.instance.client;
+      // 1. Live Fetch from Supabase
+      final householdRes = await Supabase.instance.client.from('households').select();
+      final assetsRes = await Supabase.instance.client.from('assets').select();
+      
+      // 2. Parse JSON to Models
+      final List<Household> fetchedHouseholds = (householdRes as List)
+          .map((data) => Household.fromJson(data))
+          .toList();
+          
+      final List<Asset> fetchedAssets = (assetsRes as List)
+          .map((data) => Asset.fromJson(data))
+          .toList();
 
-      // Fetch households and assets in parallel
-      final results = await Future.wait([
-        db.from('households').select().gt('lat', 0),
-        db.from('assets').select(),
-      ]);
+      // 3. Build Map Markers
+      final hhMarkers = await buildHouseholdMarkersAsync(
+        households: fetchedHouseholds,
+        onTap: (h) {
+          debugPrint('Tapped household: ${h.id}');
+        },
+      );
+      
+      final assetMarkers = await buildAssetMarkers(fetchedAssets);
 
-      final households = <Household>[];
-      for (final r in results[0] as List) {
-        try { households.add(Household.fromJson(r)); } catch (_) {}
-      }
+      // 4. Create the Volcano Origin Marker
+      final volcanoMarker = Marker(
+        markerId: const MarkerId('volcano_center'),
+        position: _volcanoCoords,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: const InfoWindow(title: 'ACTIVE: Volcano'),
+      );
 
-      final assets = <Asset>[];
-      for (final r in results[1] as List) {
-        try { assets.add(Asset.fromJson(r)); } catch (_) {}
-      }
-
-      final householdMarkers = await _buildHouseholdMarkers(households);
-      final assetMarkers     = await buildAssetMarkers(assets);
-
+      // 5. Update state
       if (mounted) {
         setState(() {
-          _markers    = {...householdMarkers, ...assetMarkers};
-          _loadingMap = false;
+          _markers = {
+            ...hhMarkers,
+            ...assetMarkers,
+            volcanoMarker,
+          };
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _loadingMap = false);
+      debugPrint('Error fetching data from Supabase: $e');
     }
-  }
-
-  Future<Set<Marker>> _buildHouseholdMarkers(List<Household> households) async {
-    final result = <Marker>{};
-    for (final h in households) {
-      final color = markerColorFor(h.triageLevel, rescued: h.isRescued);
-      final icon  = await circularMarker(color, size: 44);
-      result.add(Marker(
-        markerId: MarkerId(h.id),
-        position: LatLng(h.latitude, h.longitude),
-        icon:     icon,
-        onTap:    () => _showPinPopup(h),
-      ));
-    }
-    return result;
-  }
-
-  void _showPinPopup(Household h) {
-    // Collapse the sheet so the popup is visible over the map
-    _sheetCtrl.animateTo(
-      _snapMin,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-    );
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isDismissible: true,
-      builder: (_) => _PinPopup(household: h, onLoginTap: _openLogin),
-    );
   }
 
   void _openLogin({bool signUp = false}) {
     showDialog(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.75),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (_) => LoginModal(
         initialTab: signUp ? AuthTab.signUp : AuthTab.login,
       ),
@@ -247,7 +222,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.white,
       body: Stack(
         children: [
           // ── Full-screen map ──────────────────────────────────────────────
@@ -255,105 +230,103 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
             child: GoogleMap(
               initialCameraPosition: _initialCamera,
               mapType: _mapType,
-              markers: _markers,
+              markers: _markers,          
+              circles: _hazardRings,      
               onMapCreated: _onMapCreated,
               myLocationEnabled: false,
               myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
               mapToolbarEnabled: false,
               compassEnabled: false,
-              rotateGesturesEnabled: true,
-              tiltGesturesEnabled: false,
             ),
           ),
 
-          if (_loadingMap)
-            const Positioned(
-              bottom: 120, left: 0, right: 0,
-              child: Center(
-                child: SizedBox(
-                  width: 24, height: 24,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2.5, color: AppColors.accent),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _criticalRed.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(6),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))
+                    ]
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
+                      SizedBox(width: 6),
+                      Text('ACTIVE: Volcano', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                    ],
+                  ),
                 ),
               ),
             ),
-
-          // ── Header ───────────────────────────────────────────────────────
-          Positioned(
-            top: 0, left: 0, right: 0,
-            child: _Header(onLoginTap: _openLogin),
           ),
 
-          // ── Map controls (right side) ─────────────────────────────────────
           Positioned(
             right: 12,
-            top: MediaQuery.of(context).padding.top + 76,
+            top: MediaQuery.of(context).padding.top + 70,
             child: _LandingMapControls(
-              onZoomIn:      _zoomIn,
-              onZoomOut:     _zoomOut,
-              onReset:       _resetBearing,
-              onMyLocation:  _goToMyLocation,
-              onToggleMap:   _toggleMapType,
-              isSatellite:   _mapType == MapType.satellite,
+              onZoomIn: _zoomIn, onZoomOut: _zoomOut, onReset: _resetBearing,
+              onMyLocation: _goToMyLocation, onToggleMap: _toggleMapType,
+              isSatellite: _mapType == MapType.satellite,
             ),
           ),
 
-          // ── Legend (bottom-left, above sheet) ────────────────────────────
           const Positioned(
-            bottom: 90,
-            left: 0,
-            child: LegendWidget(),
+            bottom: 120, 
+            left: 12,
+            child: LegendWidget(), 
           ),
 
-          // ── Draggable info panel ─────────────────────────────────────────
           DraggableScrollableSheet(
             controller: _sheetCtrl,
-            initialChildSize: _snapMax, // Ganyan na agad kataas by default
-            minChildSize: _snapMin,     // Hanggang dito lang bababa (Search bar)
-            maxChildSize: _snapMax,     // Hanggang diyan lang ang sagad na taas
+            initialChildSize: _snapMax,
+            minChildSize: _snapMin,
+            maxChildSize: _snapMax,
             snap: true,
-            snapSizes: const [_snapMin, _snapMax], // Dalawang pwesto nalang
             builder: (context, scrollCtrl) {
               return Container(
-                decoration: BoxDecoration(
-                  color: AppColors.background,
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(20)),
+                decoration: const BoxDecoration(
+                  color: _bgBase,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                   boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      blurRadius: 20,
-                      offset: const Offset(0, -4),
-                    ),
+                    BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, -4)),
                   ],
                 ),
                 child: CustomScrollView(
                   controller: scrollCtrl,
-                  // Disable natin yung scrolling sa mismong loob kung sakto na yung content
                   physics: const ClampingScrollPhysics(),
                   slivers: [
                     SliverToBoxAdapter(child: _DragHandle()),
+                    SliverToBoxAdapter(child: _Header(onLoginTap: _openLogin)),
                     SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(14, 4, 14, 40),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
-                          // ── Functional search bar ────────────────────────
                           _LandingSearchBar(mapController: _mapController),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 16),
+                          const _VolcanoAlertCard(),
+                          const SizedBox(height: 16),
 
-                          // ── Emergency Hotlines ───────────────────────────
                           _SectionCard(
-                            title: _city != null
-                                ? 'EMERGENCY HOTLINES · $_city'
-                                : 'EMERGENCY HOTLINES',
+                            title: 'CHECK YOUR AREA',
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(height: 8),
-                                // City picker inside hotlines card
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Select your city and barangay to see the current status and advisories for your area.',
+                                  style: TextStyle(color: _textMuted, fontSize: 13, height: 1.4),
+                                ),
+                                const SizedBox(height: 16),
                                 _Dropdown(
-                                  hint: '— Select City —',
+                                  hint: '- Select City -',
                                   value: _city,
                                   items: negrosOccidentalCities,
                                   onChanged: (v) {
@@ -361,12 +334,25 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                                     if (v != null) _panToCity(v);
                                   },
                                 ),
-                                const SizedBox(height: 10),
-                                if (_city != null &&
-                                    _hotlines.containsKey(_city))
+                                const SizedBox(height: 12),
+                                _Dropdown(
+                                  hint: '- Select Barangay -',
+                                  value: null,
+                                  items: const [], 
+                                  onChanged: (v) {},
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          _SectionCard(
+                            title: 'EMERGENCY HOTLINES',
+                            child: Column(
+                              children: [
+                                if (_city != null && _hotlines.containsKey(_city))
                                   ..._hotlines[_city]!.map((h) => Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 6),
+                                        padding: const EdgeInsets.only(bottom: 8),
                                         child: _HotlineRow(
                                           label: h['label']!,
                                           number: h['number']!,
@@ -374,19 +360,15 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                                         ),
                                       ))
                                 else ...[
-                                  _HotlineRow(
+                                  const _HotlineRow(
                                     label: 'National Emergency',
                                     number: '911',
                                     highlight: true,
                                   ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Select your city to see local DRRMO numbers.',
-                                    style: TextStyle(
-                                      color: AppColors.textMuted,
-                                      fontSize: 11,
-                                      fontStyle: FontStyle.italic,
-                                    ),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'Select your city above to see local DRRMO numbers.',
+                                    style: TextStyle(color: _textMuted, fontSize: 12),
                                   ),
                                 ],
                               ],
@@ -406,328 +388,209 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   }
 }
 
-// ── Pin popup (privacy-safe, shown before login) ──────────────────────────────
-
-class _PinPopup extends StatelessWidget {
-  final Household household;
-  final void Function({bool signUp}) onLoginTap;
-
-  const _PinPopup({required this.household, required this.onLoginTap});
+// ── Volcano Alert Card ───────────────────────────────────────────────────────
+class _VolcanoAlertCard extends StatelessWidget {
+  const _VolcanoAlertCard();
 
   @override
   Widget build(BuildContext context) {
-    final h     = household;
-    final color = markerColorFor(h.triageLevel, rescued: h.isRescued);
-    final vulns = h.vulnerabilities.map((v) => v.label).toList().cast<String>();
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-          12, 0, 12, MediaQuery.of(context).viewInsets.bottom + 16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF161B22),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              blurRadius: 20,
-            ),
-          ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [_volcanoGradientStart, _volcanoGradientEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Coloured header bar ──────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                        color: color, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Priority Household',
-                    style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.of(context).pop(),
-                    child: const Icon(Icons.close,
-                        color: AppColors.textSecondary, size: 20),
-                  ),
-                ],
-              ),
-            ),
-
-            // ── Privacy-safe details ─────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Column(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+        boxShadow: const [
+           BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4)),
+        ]
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _row('Brgy', h.barangay),
-                  if (h.city.isNotEmpty) _row('City', h.city),
-                  _row('Triage Level',
-                      h.triageLevel.label, valueColor: color),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Personal details hidden for privacy.',
-                    style: TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 11,
-                      fontStyle: FontStyle.italic,
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _criticalRed,
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    child: const Text(
+                      'LIVE VOLCANO ALERT',
+                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'VOLCANO',
+                    style: TextStyle(color: Color(0xFF7C2D12), fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.0),
                   ),
                 ],
               ),
-            ),
-
-            // ── Vulnerability chips ──────────────────────────────────────
-            if (vulns.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: vulns.map((v) => Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: color.withValues(alpha: 0.35)),
-                    ),
-                    child: Text(v,
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                  )).toList(),
-                ),
-              ),
-
-            // ── Login CTA ────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    onLoginTap();
-                  },
-                  icon: const Icon(Icons.lock_open, size: 16),
-                  label: const Text(
-                    'LOG IN TO VIEW FULL DETAILS',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        letterSpacing: 0.5),
-                  ),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+              const Icon(Icons.landscape, color: Color(0xFF7C2D12), size: 36),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'A volcano hazard zone is currently being monitored on the map. Review the actions below before continuing.',
+            style: TextStyle(color: _textPrimary, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 16),
+          _actionPill('Wear mask outdoors'),
+          const SizedBox(height: 8),
+          _actionPill('Stay indoors if ashfall increases'),
+          const SizedBox(height: 8),
+          _actionPill('Prepare for evacuation updates'),
+        ],
       ),
     );
   }
 
-  Widget _row(String label, String value, {Color? valueColor}) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 90,
-              child: Text('$label:',
-                  style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 12)),
-            ),
-            Text(value,
-                style: TextStyle(
-                    color: valueColor ?? AppColors.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      );
+  Widget _actionPill(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: Color(0xFF9A3412), fontSize: 13, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
 }
 
 // ── Drag handle ───────────────────────────────────────────────────────────────
-
 class _DragHandle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Center(
           child: Container(
-            width: 40,
-            height: 4,
+            width: 42,
+            height: 5,
             decoration: BoxDecoration(
-              color: AppColors.divider,
-              borderRadius: BorderRadius.circular(2),
+              color: const Color(0xFFCBD5E1), 
+              borderRadius: BorderRadius.circular(999),
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
       ],
     );
   }
 }
 
-// ── Header ────────────────────────────────────────────────────────────────────
-
+// ── Integrated Header ────────────────────────────────────────────────────────
 class _Header extends StatelessWidget {
   final VoidCallback onLoginTap;
   const _Header({required this.onLoginTap});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF0D1117).withValues(alpha: 0.80),
-            border: Border(
-              bottom: BorderSide(
-                color: AppColors.accent.withValues(alpha: 0.18),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-              child: Row(
-                children: [
-                  // ── Logo ──────────────────────────────────
-                  Container(
-                    width: 40,
-                    height: 40,
-                    child: Image.asset(
-                      'asset/logo2.png',
-                      fit: BoxFit.contain, // Makikita na ang buong logo
-                    ),
-                  ),
-                  const SizedBox(width: 11),
-
-                  // ── Title + subtitle ───────────────────────────────────────
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          const Text(
-                            'L.I.G.T.A.S.',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16,
-                              letterSpacing: 2.5,
-                            ),
-                          ),
-                          const SizedBox(width: 7),
-                          // Live indicator dot
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF3fb950),
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF3fb950)
-                                      .withValues(alpha: 0.55),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 1),
-                      const Text(
-                        'Location Intelligence & Geospatial Triage',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 10,
-                          letterSpacing: 0.2,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const Spacer(),
-
-                  // ── LOG IN button ──────────────────────────────────────────
-                  GestureDetector(
-                    onTap: onLoginTap,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 18, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: AppColors.accent,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.accent.withValues(alpha: 0.35),
-                            blurRadius: 10,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: const Text(
-                        'LOG IN',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.transparent,
+        border: Border(
+          bottom: BorderSide(color: _criticalRed, width: 2),
         ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Row(
+        children: [
+          Image.asset(
+            'asset/logo2.png',
+            width: 36,
+            height: 36,
+            fit: BoxFit.contain,
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'L.I.G.T.A.S.',
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    letterSpacing: 1.6,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Location Intelligence & Geospatial\nTriage for Accelerated Support',
+                  style: TextStyle(
+                    color: _textMuted,
+                    fontSize: 8,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: _border),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.wb_sunny_outlined, size: 14, color: _textPrimary),
+                SizedBox(width: 4),
+                Text('Light Mode', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _textPrimary)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          FilledButton(
+            onPressed: onLoginTap,
+            style: FilledButton.styleFrom(
+              backgroundColor: _accentBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+              minimumSize: const Size(0, 32),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+            ),
+            child: const Text(
+              'LOG IN',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// ── Reusable widgets ──────────────────────────────────────────────────────────
+// ── Search Bar (Google Places API Overlay) ───────────────────────────────────
+class _PlaceSuggestion {
+  final String placeId; 
+  final String title;
+  final String subtitle;
+  
+  _PlaceSuggestion({required this.placeId, required this.title, required this.subtitle});
+}
 
-/// Functional search bar — geocodes the query and pans the map.
 class _LandingSearchBar extends StatefulWidget {
   final GoogleMapController? mapController;
   const _LandingSearchBar({required this.mapController});
@@ -737,120 +600,330 @@ class _LandingSearchBar extends StatefulWidget {
 }
 
 class _LandingSearchBarState extends State<_LandingSearchBar> {
-  final _ctrl  = TextEditingController();
+  final _ctrl = TextEditingController();
   final _focus = FocusNode();
-  final _dio   = Dio();
-  bool _searching = false;
+  
+  final LayerLink _layerLink = LayerLink();
+  OverlayEntry? _overlayEntry;
+
+  List<_PlaceSuggestion> _suggestions = [];
+  Timer? _debounce;
+  bool _isLoading = false;
+
+  // FIX: Using final instead of const for the API key getter to prevent compilation errors
+  static final String _apiKey = ApiKeys.googleMaps; 
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (_focus.hasFocus && _ctrl.text.isNotEmpty && _suggestions.isNotEmpty) {
+        _showOverlay();
+      } else if (!_focus.hasFocus) {
+        _hideOverlay();
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _ctrl.dispose();
     _focus.dispose();
-    _dio.close();
+    _hideOverlay();
     super.dispose();
   }
 
-  Future<void> _search() async {
-    final query = _ctrl.text.trim();
-    if (query.isEmpty) return;
+  void _panToLocation(LatLng coords, {double zoom = 14.0}) {
+    if (widget.mapController == null) return;
+    widget.mapController!.animateCamera(CameraUpdate.newLatLngZoom(coords, zoom));
+  }
+
+  Future<void> _handleCurrentLocationTap() async {
+    _ctrl.text = 'Your Current Location';
+    _hideOverlay();
     _focus.unfocus();
-    setState(() => _searching = true);
+    
     try {
-      final res = await _dio.get(
-        'https://maps.googleapis.com/maps/api/geocode/json',
-        queryParameters: {'address': query, 'key': ApiKeys.googleMaps},
-      );
-      final results = res.data['results'] as List?;
-      if (results != null && results.isNotEmpty && widget.mapController != null) {
-        final loc = results[0]['geometry']['location'];
-        widget.mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(loc['lat'] as double, loc['lng'] as double),
-              zoom: 14,
-            ),
-          ),
-        );
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No results found.')),
-        );
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
       }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Search failed. Check your connection.')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _searching = false);
+      if (permission == LocationPermission.deniedForever) return;
+      
+      final pos = await Geolocator.getCurrentPosition();
+      _panToLocation(LatLng(pos.latitude, pos.longitude), zoom: 15.0);
+    } catch (_) {}
+  }
+
+  void _onTextChanged(String value) {
+    setState(() {}); 
+    
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+
+    if (value.isEmpty) {
+      setState(() => _suggestions = []);
+      _hideOverlay();
+      return;
     }
+
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      setState(() => _isLoading = true);
+      
+      try {
+        final url = 'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+            '?input=$value&key=$_apiKey&components=country:ph'; 
+            
+        final response = await Dio().get(url);
+        
+        if (response.data['status'] == 'OK') {
+          final predictions = response.data['predictions'] as List;
+          
+          setState(() {
+            _suggestions = predictions.map((p) {
+              final mainText = p['structured_formatting']['main_text'] ?? '';
+              final secondaryText = p['structured_formatting']['secondary_text'] ?? '';
+              return _PlaceSuggestion(
+                placeId: p['place_id'],
+                title: mainText,
+                subtitle: secondaryText,
+              );
+            }).toList();
+          });
+          
+          if (_suggestions.isNotEmpty && _focus.hasFocus) {
+            _showOverlay();
+            _overlayEntry?.markNeedsBuild();
+          }
+        }
+      } catch (e) {
+        debugPrint('Error fetching places: $e');
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  Future<void> _getPlaceDetailsAndPan(String placeId) async {
+    try {
+      final url = 'https://maps.googleapis.com/maps/api/geocode/json'
+          '?place_id=$placeId&key=$_apiKey';
+          
+      final response = await Dio().get(url);
+      
+      if (response.data['status'] == 'OK') {
+        final location = response.data['results'][0]['geometry']['location'];
+        final lat = location['lat'];
+        final lng = location['lng'];
+        
+        _panToLocation(LatLng(lat, lng));
+      }
+    } catch (e) {
+      debugPrint('Error fetching geocode: $e');
+    }
+  }
+
+  void _showOverlay() {
+    if (_overlayEntry != null) return;
+    
+    RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    var size = renderBox.size;
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        width: size.width,
+        child: CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          offset: Offset(0.0, size.height + 4),
+          child: _buildDropdown(),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  void _hideOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  Widget _buildDropdown() {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(8),
+      color: Colors.white,
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: _handleCurrentLocationTap,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.my_location, color: Color(0xFF0A67D0), size: 18),
+                    SizedBox(width: 12),
+                    Text(
+                      'Your Current Location',
+                      style: TextStyle(color: Color(0xFF0A67D0), fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+            if (_suggestions.isNotEmpty)
+              const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+            
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 250),
+                child: ListView.separated(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: _suggestions.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+                  itemBuilder: (context, index) {
+                    final item = _suggestions[index];
+                    return InkWell(
+                      onTap: () {
+                        _ctrl.text = item.title;
+                        _hideOverlay();
+                        _focus.unfocus();
+                        _getPlaceDetailsAndPan(item.placeId); 
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.only(top: 2),
+                              child: Icon(Icons.push_pin, color: Color(0xFFDC2626), size: 16),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.title,
+                                    style: const TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                  if (item.subtitle.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      item.subtitle,
+                                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
+                                    ),
+                                  ]
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 46,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(23),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const SizedBox(width: 14),
-          const Icon(Icons.location_on, color: AppColors.accent, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _ctrl,
-              focusNode: _focus,
-              style: const TextStyle(color: Colors.black87, fontSize: 14),
-              decoration: const InputDecoration(
-                hintText: 'Search a place or barangay...',
-                hintStyle: TextStyle(color: Colors.black38, fontSize: 14),
-                border: InputBorder.none,
-                isDense: true,
-              ),
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _search(),
-            ),
-          ),
-          GestureDetector(
-            onTap: _search,
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: const BoxDecoration(
-                color: AppColors.accent,
-                borderRadius: BorderRadius.only(
-                  topRight: Radius.circular(23),
-                  bottomRight: Radius.circular(23),
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: Container(
+        height: 50,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))
+          ]
+        ),
+        padding: const EdgeInsets.only(left: 12, right: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.push_pin, color: Color(0xFFDC2626), size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _ctrl,
+                focusNode: _focus,
+                onChanged: _onTextChanged,
+                style: const TextStyle(color: Color(0xFF1E293B), fontSize: 14),
+                decoration: const InputDecoration(
+                  hintText: 'Search a place or barangay...',
+                  hintStyle: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+                  border: InputBorder.none,
+                  isDense: true,
                 ),
               ),
-              child: _searching
-                  ? const Center(
-                      child: SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      ),
-                    )
-                  : const Icon(Icons.search, color: Colors.white, size: 20),
             ),
-          ),
-        ],
+            
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: SizedBox(
+                  width: 16, height: 16, 
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0A67D0))
+                ),
+              )
+            else if (_ctrl.text.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _ctrl.clear();
+                  _onTextChanged(''); 
+                  _focus.requestFocus(); 
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.close, color: Color(0xFF64748B), size: 18),
+                ),
+              ),
+              
+            GestureDetector(
+              onTap: () {
+                _hideOverlay();
+                _focus.unfocus();
+                if (_suggestions.isNotEmpty) {
+                  _ctrl.text = _suggestions.first.title;
+                  _getPlaceDetailsAndPan(_suggestions.first.placeId);
+                }
+              },
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A67D0),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.search, color: Colors.white, size: 18),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
+// ── Sections & Cards ─────────────────────────────────────────────────────────
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
@@ -861,24 +934,20 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
+        color: _bgSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: AppColors.accent,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.2,
-            ),
+            style: const TextStyle(color: _textMuted, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2),
           ),
+          const SizedBox(height: 8),
           child,
         ],
       ),
@@ -893,159 +962,110 @@ class _Dropdown extends StatelessWidget {
   final ValueChanged<String?>? onChanged;
 
   const _Dropdown({
-    required this.hint,
-    required this.value,
-    required this.items,
-    required this.onChanged,
+    required this.hint, required this.value, required this.items, required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: 48,
       decoration: BoxDecoration(
-        color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.divider),
+        color: _bgSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _border),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: DropdownButton<String>(
-        value: value,
-        hint: Text(hint,
-            style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        dropdownColor: AppColors.cardBackground,
-        iconEnabledColor: AppColors.textSecondary,
-        iconDisabledColor: AppColors.textMuted,
-        style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
-        onChanged: onChanged,
-        items: items
-            .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-            .toList(),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          hint: Text(hint, style: const TextStyle(color: _textMuted, fontSize: 14)),
+          isExpanded: true,
+          dropdownColor: _bgSurface, 
+          icon: const Icon(Icons.keyboard_arrow_down, color: _textPrimary),
+          style: const TextStyle(color: _textPrimary, fontSize: 14),
+          onChanged: onChanged,
+          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+        ),
       ),
     );
   }
-}
-
-// ── Landing map controls ──────────────────────────────────────────────────────
-
-class _LandingMapControls extends StatelessWidget {
-  final VoidCallback onZoomIn;
-  final VoidCallback onZoomOut;
-  final VoidCallback onReset;
-  final VoidCallback onMyLocation;
-  final VoidCallback onToggleMap;
-  final bool isSatellite;
-
-  const _LandingMapControls({
-    required this.onZoomIn,
-    required this.onZoomOut,
-    required this.onReset,
-    required this.onMyLocation,
-    required this.onToggleMap,
-    required this.isSatellite,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Group 1: Zoom + compass
-        _group([
-          _btn(icon: Icons.add,        onTap: onZoomIn),
-          _divider(),
-          _btn(icon: Icons.remove,     onTap: onZoomOut),
-          _divider(),
-          _btn(icon: Icons.navigation, onTap: onReset),
-        ]),
-        const SizedBox(height: 10),
-        // Group 2: My location
-        _group([_btn(icon: Icons.my_location, onTap: onMyLocation)]),
-        const SizedBox(height: 10),
-        // Group 3: Map type
-        _group([_btn(icon: Icons.map_outlined, onTap: onToggleMap, active: isSatellite)]),
-      ],
-    );
-  }
-
-  Widget _group(List<Widget> children) => Container(
-        width: 44,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Column(children: children),
-      );
-
-  Widget _divider() => Container(
-        height: 1, width: 32,
-        color: Colors.grey.withValues(alpha: 0.3),
-      );
-
-  Widget _btn({required IconData icon, required VoidCallback onTap, bool active = false}) =>
-      Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: SizedBox(
-            height: 44,
-            child: Center(
-              child: Icon(icon, size: 22,
-                  color: active ? const Color(0xFF1A73E8) : Colors.black87),
-            ),
-          ),
-        ),
-      );
 }
 
 class _HotlineRow extends StatelessWidget {
   final String label;
   final String number;
   final bool highlight;
-  const _HotlineRow({
-    required this.label,
-    required this.number,
-    this.highlight = false,
-  });
+  
+  const _HotlineRow({required this.label, required this.number, this.highlight = false});
 
   @override
   Widget build(BuildContext context) {
-    final digits = number.replaceAll(RegExp(r'\D'), '');
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.divider),
+        color: _bgBase, 
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
           Expanded(
-            child: Text(label,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12)),
+            child: Text(label, style: const TextStyle(color: _textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
           ),
-          GestureDetector(
-            onTap: () => launchUrl(Uri.parse('tel:$digits')),
-            child: Text(
-              number,
-              style: TextStyle(
-                color: highlight ? AppColors.accent : const Color(0xFF3fb950),
-                fontWeight: FontWeight.w700,
-                fontSize: highlight ? 16 : 13,
-              ),
+          Text(
+            number,
+            style: TextStyle(
+              color: highlight ? const Color(0xFF059669) : _textPrimary, 
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
             ),
           ),
         ],
       ),
     );
   }
+}
+
+class _LandingMapControls extends StatelessWidget {
+  final VoidCallback onZoomIn, onZoomOut, onReset, onMyLocation, onToggleMap;
+  final bool isSatellite;
+
+  const _LandingMapControls({
+    required this.onZoomIn, required this.onZoomOut, required this.onReset,
+    required this.onMyLocation, required this.onToggleMap, required this.isSatellite,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          width: 44,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2))],
+          ),
+          child: Column(
+            children: [
+              _btn(icon: Icons.fullscreen, onTap: onReset),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
+  Widget _btn({required IconData icon, required VoidCallback onTap}) =>
+      Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 44,
+            child: Center(child: Icon(icon, size: 24, color: _textPrimary)),
+          ),
+        ),
+      );
 }

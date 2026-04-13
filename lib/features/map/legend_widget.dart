@@ -8,17 +8,18 @@ class LegendWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      // Binabaan ko yung bottom margin para hindi masyadong naka-angat
+      // Keep your existing margin
       margin: const EdgeInsets.only(left: 10, bottom: 0), 
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1117).withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF30363D)),
-        boxShadow: [
+        color: Colors.white, // Light mode background
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)), // Light border
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 8,
+            color: Colors.black12,
+            blurRadius: 12,
+            offset: Offset(0, 4),
           ),
         ],
       ),
@@ -31,26 +32,27 @@ class LegendWidget extends StatelessWidget {
           _triageRow(AppColors.critical, 'Critical (Immobile)'),
           _triageRow(AppColors.high,     'High (Limited Mob.)'),
           _triageRow(AppColors.elevated, 'Elevated (Vuln.)'),
-          _triageRow(const Color(0xFF238636), 'Rescued'),
+          // Brighter green for "Rescued" to fit light mode better
+          _triageRow(const Color(0xFF16A34A), 'Rescued'), 
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           
-          // ── Assets (Hardcoded based on screenshot) ───────────────────
+          // ── Assets ───────────────────────────────────────────────────
           _section('ASSETS'),
           _assetRow('🚤', 'Rescue Boat'),
           _assetRow('🚑', 'Medic Team '),
-          _assetRow('🚒', 'Transport Truck 01'), // Pwede mong palitan yung emoji kung gusto mo
+          _assetRow('🚒', 'Transport Truck 01'),
         ],
       ),
     );
   }
 
   Widget _section(String label) => Padding(
-        padding: const EdgeInsets.only(bottom: 5),
+        padding: const EdgeInsets.only(bottom: 6),
         child: Text(
           label,
           style: const TextStyle(
-            color: Colors.white,
+            color: Color(0xFF1E293B), // Dark slate text for headings
             fontSize: 10,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.1,
@@ -73,7 +75,8 @@ class LegendWidget extends StatelessWidget {
               label,
               style: AppTextStyles.labelSmall.copyWith(
                 fontSize: 11,
-                color: Colors.white70,
+                color: const Color(0xFF475569), // Slate gray for secondary text
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -91,7 +94,8 @@ class LegendWidget extends StatelessWidget {
               label,
               style: AppTextStyles.labelSmall.copyWith(
                 fontSize: 11,
-                color: Colors.white70,
+                color: const Color(0xFF475569), // Slate gray for secondary text
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],

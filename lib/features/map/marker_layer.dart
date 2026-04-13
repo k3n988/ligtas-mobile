@@ -11,6 +11,7 @@ Future<Set<Marker>> buildHouseholdMarkersAsync({
 }) async {
   final markers = <Marker>{};
   for (final h in households) {
+    // Assuming markerColorFor is defined in marker_icons.dart
     final color = markerColorFor(h.triageLevel, rescued: h.isRescued);
     final icon  = await circularMarker(color);
     markers.add(Marker(
@@ -28,6 +29,7 @@ Future<Set<Marker>> buildHouseholdMarkersAsync({
 Future<Set<Marker>> buildAssetMarkers(List<Asset> assets) async {
   final markers = <Marker>{};
   for (final a in assets) {
+    // Assuming emojiMarker is defined in marker_icons.dart
     final icon = await emojiMarker(a.icon);
     markers.add(Marker(
       markerId:    MarkerId('asset_${a.id}'),
