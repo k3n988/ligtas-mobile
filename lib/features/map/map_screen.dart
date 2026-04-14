@@ -13,6 +13,7 @@ import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
+import 'hazard_control_panel.dart'; // <-- 1. ADDED IMPORT HERE
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
@@ -157,6 +158,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
               child: _SearchBar(ctrl: ctrl, isSearching: mapState.isSearching),
             ),
+          ),
+
+          // ── Hazard Control Panel ──────────────────────────────────────
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 70,
+            left: 0,
+            right: 0,
+            child: const HazardControlPanel(),
           ),
 
           // ── Right-side controls ───────────────────────────────────────

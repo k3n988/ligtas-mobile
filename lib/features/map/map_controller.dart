@@ -58,23 +58,15 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
   Future<void> goToMyLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        debugPrint('Location services are disabled.');
-        return;
-      }
+      if (!serviceEnabled) return;
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          debugPrint('Location permissions are denied');
-          return;
-        }
+        if (permission == LocationPermission.denied) return;
       }
-      if (permission == LocationPermission.deniedForever) {
-        debugPrint('Location permissions are permanently denied');
-        return;
-      }
+      
+      if (permission == LocationPermission.deniedForever) return;
 
       Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
@@ -94,39 +86,22 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     }
   }
 
-  // ── Fit the densest cluster of households in view ────────────────────────
-  //
-  // Instead of fitting ALL pins (which lets a single outlier force a wide
-  // zoom-out), we use a percentile-based bounding box that frames the core
-  // cluster where most pins live and ignores edge outliers.
-
   Future<void> fitAllHouseholds(List<Household> households) async {
     if (households.isEmpty) return;
 
-    // 1. Sort latitudes and longitudes independently
     final lats = households.map((h) => h.latitude).toList()..sort();
     final lngs = households.map((h) => h.longitude).toList()..sort();
 
-    // 2. Pick the 10th–90th percentile range to exclude outlier pins.
-    //    With only a handful of points this gracefully falls back to
-    //    the full min/max, so it is safe for both small and large datasets.
     double percentile(List<double> sorted, double p) {
       final idx = ((sorted.length - 1) * p).round().clamp(0, sorted.length - 1);
       return sorted[idx];
     }
 
-    final minLat = percentile(lats, 0.10);
-    final maxLat = percentile(lats, 0.90);
-    final minLng = percentile(lngs, 0.10);
-    final maxLng = percentile(lngs, 0.90);
-
-    // 3. Build the cluster bounding box
     final bounds = LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
+      southwest: LatLng(percentile(lats, 0.10), percentile(lngs, 0.10)),
+      northeast: LatLng(percentile(lats, 0.90), percentile(lngs, 0.90)),
     );
 
-    // 4. Animate the camera to frame the cluster with comfortable padding
     try {
       final ctrl = await _ctrl;
       ctrl.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80.0));
@@ -162,16 +137,10 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
   Future<void> resetBearing() async {
     final ctrl = await _ctrl;
     state = state.copyWith(is3D: false, mapType: MapType.normal);
-
     final cam = state.currentCamera;
     ctrl.animateCamera(
       CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: cam.target,
-          zoom: cam.zoom,
-          tilt: 0.0,
-          bearing: 0.0,
-        ),
+        CameraPosition(target: cam.target, zoom: cam.zoom, tilt: 0.0, bearing: 0.0),
       ),
     );
   }
@@ -194,22 +163,21 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       final loc = results[0]['geometry']['location'];
       final target = LatLng(loc['lat'] as double, loc['lng'] as double);
       final ctrl = await _ctrl;
-      ctrl.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: target, zoom: 14),
-        ),
-      );
+      ctrl.animateCamera(CameraUpdate.newCameraPosition(CameraPosition(target: target, zoom: 14)));
       state = state.copyWith(isSearching: false);
       return null;
     } catch (_) {
       state = state.copyWith(isSearching: false);
-      return 'Search failed. Check your connection.';
+      return 'Search failed.';
     }
   }
 
-  // ── Household select + routing ────────────────────────────────────────────
+  // ── Household select + routing (FIXED) ────────────────────────────────────
 
   Future<void> selectHousehold(Household? h, {List<Asset>? assets}) async {
+    // Debug to confirm the marker tap is working
+    debugPrint('Select Household: ${h?.id ?? "None"}');
+
     if (h == null) {
       state = state.copyWith(
         clearSelected: true,
@@ -222,11 +190,13 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       return;
     }
 
+    // Explicitly update selected state first
     state = state.copyWith(selected: h);
+
     final ctrl = await _ctrl;
     ctrl.animateCamera(
       CameraUpdate.newCameraPosition(
-        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 15.5),
+        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 16.5),
       ),
     );
 
@@ -235,10 +205,7 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     }
   }
 
-  // ── Pan to household without drawing a route ─────────────────────────────
-
   Future<void> panToHousehold(Household h) async {
-    // Switch to satellite + close zoom so rescuer can see the exact building
     state = state.copyWith(
       selected: h,
       is3D: true,
@@ -255,8 +222,6 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     );
   }
 
-  // ── Pan to household + draw route from rescuer's live GPS ─────────────────
-
   Future<void> selectHouseholdAndRouteFromGps(Household h) async {
     state = state.copyWith(
       selected: h,
@@ -264,36 +229,25 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       clearNearestAsset: true,
       clearRouteDistance: true,
     );
+    
     final ctrl = await _ctrl;
     ctrl.animateCamera(
       CameraUpdate.newCameraPosition(
-        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 15.5),
+        CameraPosition(target: LatLng(h.latitude, h.longitude), zoom: 16.0),
       ),
     );
 
     try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
-
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      );
-
+      final pos = await Geolocator.getCurrentPosition();
       state = state.copyWith(isRouting: true);
 
       final response = await _dio.get(
         'https://maps.googleapis.com/maps/api/directions/json',
         queryParameters: {
-          'origin':      '${pos.latitude},${pos.longitude}',
+          'origin': '${pos.latitude},${pos.longitude}',
           'destination': '${h.latitude},${h.longitude}',
-          'key':         ApiKeys.googleMaps,
-          'mode':        'driving',
+          'key': ApiKeys.googleMaps,
+          'mode': 'driving',
         },
       );
 
@@ -304,13 +258,9 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       }
 
       final encoded = routes[0]['overview_polyline']['points'] as String;
-      final points  = decodePolyline(encoded);
-
-      double? routeMeters;
+      final points = decodePolyline(encoded);
       final legs = routes[0]['legs'] as List?;
-      if (legs != null && legs.isNotEmpty) {
-        routeMeters = (legs[0]['distance']['value'] as int).toDouble();
-      }
+      double? dist = legs != null ? (legs[0]['distance']['value'] as int).toDouble() : null;
 
       state = state.copyWith(
         isRouting: false,
@@ -320,10 +270,9 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
             points: points,
             color: const Color(0xFF4CAF50),
             width: 5,
-            patterns: [],
           ),
         },
-        routeDistanceMeters: routeMeters,
+        routeDistanceMeters: dist,
       );
     } catch (_) {
       state = state.copyWith(isRouting: false);
@@ -344,13 +293,11 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     );
 
     try {
-      final origin = '${nearest.asset.latitude},${nearest.asset.longitude}';
-      final destination = '${h.latitude},${h.longitude}';
       final response = await _dio.get(
         'https://maps.googleapis.com/maps/api/directions/json',
         queryParameters: {
-          'origin': origin,
-          'destination': destination,
+          'origin': '${nearest.asset.latitude},${nearest.asset.longitude}',
+          'destination': '${h.latitude},${h.longitude}',
           'key': ApiKeys.googleMaps,
           'mode': 'driving',
         },
@@ -358,27 +305,21 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
 
       final routes = response.data['routes'] as List?;
       if (routes != null && routes.isNotEmpty) {
-        final encoded = routes[0]['overview_polyline']['points'] as String;
-        final points = decodePolyline(encoded);
-
+        final points = decodePolyline(routes[0]['overview_polyline']['points']);
         final legs = routes[0]['legs'] as List?;
-        double? routeMeters;
-        if (legs != null && legs.isNotEmpty) {
-          routeMeters = (legs[0]['distance']['value'] as int).toDouble();
-        }
-
-        final polyline = Polyline(
-          polylineId: const PolylineId('route'),
-          points: points,
-          color: const Color(0xFF1A73E8),
-          width: 4,
-          patterns: [],
-        );
+        double? dist = legs != null ? (legs[0]['distance']['value'] as int).toDouble() : null;
 
         state = state.copyWith(
           isRouting: false,
-          polylines: {polyline},
-          routeDistanceMeters: routeMeters ?? nearest.distanceMeters,
+          polylines: {
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: points,
+              color: const Color(0xFF1A73E8),
+              width: 4,
+            ),
+          },
+          routeDistanceMeters: dist ?? nearest.distanceMeters,
         );
       } else {
         state = state.copyWith(isRouting: false);
@@ -396,7 +337,7 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
   }
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── State (FIXED logic for selection) ───────────────────────────────────────
 
 class MapControllerState {
   final Household? selected;
@@ -437,6 +378,7 @@ class MapControllerState {
     bool clearRouteDistance = false,
   }) {
     return MapControllerState(
+      // Ensure we can actually set a new selected household or nullify it
       selected: clearSelected ? null : (selected ?? this.selected),
       is3D: is3D ?? this.is3D,
       isSearching: isSearching ?? this.isSearching,
@@ -444,11 +386,8 @@ class MapControllerState {
       currentCamera: currentCamera ?? this.currentCamera,
       mapType: mapType ?? this.mapType,
       polylines: clearPolylines ? {} : (polylines ?? this.polylines),
-      nearestAsset:
-          clearNearestAsset ? null : (nearestAsset ?? this.nearestAsset),
-      routeDistanceMeters: clearRouteDistance
-          ? null
-          : (routeDistanceMeters ?? this.routeDistanceMeters),
+      nearestAsset: clearNearestAsset ? null : (nearestAsset ?? this.nearestAsset),
+      routeDistanceMeters: clearRouteDistance ? null : (routeDistanceMeters ?? this.routeDistanceMeters),
     );
   }
 }

@@ -18,6 +18,7 @@ Future<Set<Marker>> buildHouseholdMarkersAsync({
       markerId: MarkerId(h.id),
       position: LatLng(h.latitude, h.longitude),
       icon:     icon,
+      consumeTapEvents: true,
       anchor:   const Offset(0.5, 0.5),
       onTap:    () => onTap(h),
     ));
@@ -35,6 +36,7 @@ Future<Set<Marker>> buildAssetMarkers(List<Asset> assets) async {
       markerId:    MarkerId('asset_${a.id}'),
       position:    LatLng(a.latitude, a.longitude),
       icon:        icon,
+      consumeTapEvents: true,
       anchor:      const Offset(0.5, 0.5),
       infoWindow:  InfoWindow(title: a.name, snippet: a.unit),
     ));

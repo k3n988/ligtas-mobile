@@ -14,6 +14,8 @@ import '../../core/models/household.dart';
 import '../map/legend_widget.dart';
 import '../map/marker_layer.dart';
 import 'login_modal.dart';
+import '../map/hazard_control_panel.dart';
+import '../../core/models/triage_level.dart';
 
 // ── Web Design System Colors (Light Mode Extracted from Screenshots) ──
 const _bgBase = Color(0xFFF0F4F8);       // Light grayish-blue background for the sheet
@@ -62,6 +64,7 @@ class LandingScreen extends ConsumerStatefulWidget {
 
 class _LandingScreenState extends ConsumerState<LandingScreen> {
   String? _city;
+  Household? _selectedHousehold;
 
   GoogleMapController? _mapController;
   Set<Marker> _markers    = {};
@@ -180,7 +183,11 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
       final hhMarkers = await buildHouseholdMarkersAsync(
         households: fetchedHouseholds,
         onTap: (h) {
-          debugPrint('Tapped household: ${h.id}');
+          if (mounted) {
+            setState(() {
+              _selectedHousehold = h;
+            });
+          }
         },
       );
       
@@ -225,7 +232,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
       backgroundColor: Colors.white,
       body: Stack(
         children: [
-          // ── Full-screen map ──────────────────────────────────────────────
+          // 1. ── Full-screen map ──────────────────────────────────────────────
           Positioned.fill(
             child: GoogleMap(
               initialCameraPosition: _initialCamera,
@@ -238,36 +245,24 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
               zoomControlsEnabled: false,
               mapToolbarEnabled: false,
               compassEnabled: false,
+              // Tapping the empty map closes the popup
+              onTap: (_) {
+                if (_selectedHousehold != null) {
+                  setState(() => _selectedHousehold = null);
+                }
+              },
             ),
           ),
 
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _criticalRed.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(6),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))
-                    ]
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
-                      SizedBox(width: 6),
-                      Text('ACTIVE: Volcano', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          // 2. ── Hazard Control Panel ──────────────────────────────────────
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16, 
+            left: 0,
+            right: 0,
+            child: const HazardControlPanel(),
           ),
 
+          // 3. ── Map Controls ──────────────────────────────────────────────
           Positioned(
             right: 12,
             top: MediaQuery.of(context).padding.top + 70,
@@ -278,12 +273,14 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
             ),
           ),
 
+          // 4. ── Legend ────────────────────────────────────────────────────
           const Positioned(
             bottom: 120, 
             left: 12,
             child: LegendWidget(), 
           ),
 
+          // 5. ── Draggable Bottom Sheet ────────────────────────────────────
           DraggableScrollableSheet(
             controller: _sheetCtrl,
             initialChildSize: _snapMax,
@@ -313,7 +310,6 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                           const SizedBox(height: 16),
                           const _VolcanoAlertCard(),
                           const SizedBox(height: 16),
-
                           _SectionCard(
                             title: 'CHECK YOUR AREA',
                             child: Column(
@@ -345,7 +341,6 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-
                           _SectionCard(
                             title: 'EMERGENCY HOTLINES',
                             child: Column(
@@ -382,6 +377,20 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
               );
             },
           ),
+
+          // 6. ── Priority Household Popup (TOPMOST) ─────────────────────────
+          if (_selectedHousehold != null)
+            Positioned(
+              top: MediaQuery.of(context).size.height * 0.35, // Centers above the sheet
+              left: 0,
+              right: 0,
+              child: Center(
+                child: _PriorityHouseholdPopup(
+                  household: _selectedHousehold!,
+                  onClose: () => setState(() => _selectedHousehold = null),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -610,7 +619,6 @@ class _LandingSearchBarState extends State<_LandingSearchBar> {
   Timer? _debounce;
   bool _isLoading = false;
 
-  // FIX: Using final instead of const for the API key getter to prevent compilation errors
   static final String _apiKey = ApiKeys.googleMaps; 
 
   @override
@@ -1068,4 +1076,122 @@ class _LandingMapControls extends StatelessWidget {
           ),
         ),
       );
+}
+
+// ── Custom Marker Popup ──────────────────────────────────────────────────────
+class _PriorityHouseholdPopup extends StatelessWidget {
+  final Household household;
+  final VoidCallback onClose;
+
+  const _PriorityHouseholdPopup({
+    required this.household,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Main Card
+        Container(
+          width: 280,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1D24), // Dark theme background
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(color: Colors.black45, blurRadius: 16, offset: Offset(0, 8)),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Priority Household', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                  GestureDetector(
+                    onTap: onClose,
+                    child: const Icon(Icons.close, color: Color(0xFF64748B), size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              
+              // Barangay
+              Text('Brgy: ${household.barangay}', style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 13)),
+              const SizedBox(height: 4),
+              
+              // Triage Level
+              Row(
+                children: [
+                  const Text('Triage Level: ', style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 13)),
+                  Text(
+                    household.triageLevel.name.toUpperCase(),
+                    style: TextStyle(
+                      color: household.triageLevel.color, // Uses the exact color from your Triage enum
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // PII Notice
+              const Text(
+                'Personally Identifiable Information (PII) is\nhidden.',
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 11, fontStyle: FontStyle.italic, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+
+              // Vulnerability Tags (e.g. Senior, PWD)
+              if (household.vulnerabilities.isNotEmpty)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: household.vulnerabilities.map((v) => 
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF292E36),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0xFF3F4652)),
+                      ),
+                      child: Text(v.label, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11)),
+                    )
+                  ).toList(),
+                ),
+            ],
+          ),
+        ),
+        
+        // The little triangle pointing down
+        ClipPath(
+          clipper: _TriangleClipper(),
+          child: Container(
+            width: 20,
+            height: 10,
+            color: const Color(0xFF1A1D24),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TriangleClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.lineTo(size.width, 0); // Top right
+    path.lineTo(size.width / 2, size.height); // Bottom center
+    path.close(); // Back to top left
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
