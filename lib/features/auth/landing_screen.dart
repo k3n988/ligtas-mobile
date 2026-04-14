@@ -16,7 +16,7 @@ import '../map/marker_layer.dart';
 import 'login_modal.dart';
 import '../map/hazard_control_panel.dart';
 import '../../core/models/triage_level.dart';
-
+//d
 // ── Web Design System Colors (Light Mode Extracted from Screenshots) ──
 const _bgBase = Color(0xFFF0F4F8);       // Light grayish-blue background for the sheet
 const _bgSurface = Colors.white;         // White cards and inputs
