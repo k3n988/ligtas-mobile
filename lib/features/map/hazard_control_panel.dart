@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+// IMPORTANT: Adjust this import path to point to your actual auth_provider.dart file
+import '../auth/auth_provider.dart'; 
 
 const List<String> _hazardTypes = ['Flood', 'Volcano', 'Earthquake', 'Typhoon', 'Landslide', 'Storm Surge'];
 
@@ -9,16 +13,16 @@ const Map<String, Color> _severityColors = {
   'stable': Color(0xFF58A6FF),
 };
 
-class HazardControlPanel extends StatefulWidget {
+class HazardControlPanel extends ConsumerStatefulWidget {
   const HazardControlPanel({super.key});
 
   @override
-  State<HazardControlPanel> createState() => _HazardControlPanelState();
+  ConsumerState<HazardControlPanel> createState() => _HazardControlPanelState();
 }
 
-class _HazardControlPanelState extends State<HazardControlPanel> {
+class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
   // ── Local UI State ────────────────────────────────────────────────────────
-  bool _isOpen = false;
+  bool _isOpen = false; 
   String _hazardType = 'Volcano'; 
   
   final _criticalCtrl = TextEditingController(text: '1.0');
@@ -37,14 +41,18 @@ class _HazardControlPanelState extends State<HazardControlPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin = true; 
+    // 1. Watch the auth state from Riverpod
+    final authState = ref.watch(authProvider);
+    
+    // 2. Determine if user is admin (Uses the getter you added to AuthState)
+    final isAdmin = authState.isAdmin; 
     
     return Align(
       alignment: Alignment.topCenter,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ── The Button ──────────────────────────────────────────────────
+          // ── The Toggle Button ───────────────────────────────────────────
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFDA3633),
@@ -82,7 +90,7 @@ class _HazardControlPanelState extends State<HazardControlPanel> {
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min, // Prevents height crashes
+                  mainAxisSize: MainAxisSize.min, 
                   children: [
                     // Header
                     Container(
@@ -114,31 +122,37 @@ class _HazardControlPanelState extends State<HazardControlPanel> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── Admin Controls ────────────────────────────────────────
-                    _buildLabel('Disaster Type'),
-                    _buildDropdown(
-                      value: _hazardType,
-                      items: _hazardTypes,
-                      onChanged: (v) => setState(() => _hazardType = v!),
-                    ),
-                    const SizedBox(height: 14),
+                    // ── Dynamic Controls (Admin vs Others) ──────────────────
+                    if (isAdmin) ...[
+                      // Admin View: Interactive Inputs
+                      _buildLabel('Disaster Type'),
+                      _buildDropdown(
+                        value: _hazardType,
+                        items: _hazardTypes,
+                        onChanged: (v) => setState(() => _hazardType = v!),
+                      ),
+                      const SizedBox(height: 14),
 
-                    _buildLabel('Hazard Radii (km)'),
-                    Row(
-                      children: [
-                        Expanded(child: _buildRadiiInput('Critical', _criticalCtrl, _severityColors['critical']!)),
-                        const SizedBox(width: 10),
-                        Expanded(child: _buildRadiiInput('High', _highCtrl, _severityColors['high']!)),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(child: _buildRadiiInput('Elevated', _elevatedCtrl, _severityColors['elevated']!)),
-                        const SizedBox(width: 10),
-                        Expanded(child: _buildRadiiInput('Stable', _stableCtrl, _severityColors['stable']!)),
-                      ],
-                    ),
+                      _buildLabel('Hazard Radii (km)'),
+                      Row(
+                        children: [
+                          Expanded(child: _buildRadiiInput('Critical', _criticalCtrl, _severityColors['critical']!)),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildRadiiInput('High', _highCtrl, _severityColors['high']!)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(child: _buildRadiiInput('Elevated', _elevatedCtrl, _severityColors['elevated']!)),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildRadiiInput('Stable', _stableCtrl, _severityColors['stable']!)),
+                        ],
+                      ),
+                    ] else ...[
+                      // Non-Admin View: Clean Text Display
+                      _buildReadOnlyView(),
+                    ],
                   ],
                 ),
               ),
@@ -149,6 +163,53 @@ class _HazardControlPanelState extends State<HazardControlPanel> {
   }
 
   // ── UI Helpers ────────────────────────────────────────────────────────────
+  
+  Widget _buildReadOnlyView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RichText(
+          text: TextSpan(
+            style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12, height: 1.4),
+            children: [
+              const TextSpan(text: 'An active '),
+              TextSpan(
+                text: _hazardType, 
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)
+              ),
+              const TextSpan(text: ' hazard zone is being monitored. Triage levels for households within these radii are dynamically adjusted.'),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildReadOnlyRadiusItem('Critical', _criticalCtrl.text, _severityColors['critical']!),
+        const SizedBox(height: 8),
+        _buildReadOnlyRadiusItem('High', _highCtrl.text, _severityColors['high']!),
+        const SizedBox(height: 8),
+        _buildReadOnlyRadiusItem('Elevated', _elevatedCtrl.text, _severityColors['elevated']!),
+        const SizedBox(height: 8),
+        _buildReadOnlyRadiusItem('Stable', _stableCtrl.text, _severityColors['stable']!),
+      ],
+    );
+  }
+
+  Widget _buildReadOnlyRadiusItem(String label, String value, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 6, 
+          height: 6, 
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle)
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ${value}km',
+          style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500),
+        ),
+      ],
+    );
+  }
+
   Widget _buildLabel(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),

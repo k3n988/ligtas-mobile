@@ -11,6 +11,9 @@ enum UserRole { admin, rescuer, citizen, unknown }
 // ── Auth state ────────────────────────────────────────────────────────────────
 
 class AuthState {
+  // Helper to easily check admin status in your UI (like the Hazard Panel)
+  bool get isAdmin => role == UserRole.admin;
+  
   final bool isLoggedIn;
   final bool isLoading;
   final String? username;
@@ -40,6 +43,7 @@ class AuthState {
 // ── Test / dev accounts (bypass Supabase for short passwords) ─────────────────
 
 const _testAccounts = {
+  'admin@gmail.com':   (password: 'admin123', role: UserRole.admin),   // Added for testing the Hazard Panel
   'asset@gmail.com':   (password: '123', role: UserRole.rescuer),
   'citizen@gmail.com': (password: '123', role: UserRole.citizen),
 };
