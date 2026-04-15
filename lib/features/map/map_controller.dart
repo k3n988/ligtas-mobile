@@ -53,6 +53,13 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
     ctrl.animateCamera(CameraUpdate.zoomOut());
   }
 
+  Future<void> animateTo(LatLng target, {double zoom = 12}) async {
+    final ctrl = await _ctrl;
+    ctrl.animateCamera(
+      CameraUpdate.newCameraPosition(CameraPosition(target: target, zoom: zoom)),
+    );
+  }
+
   // ── Go to My Location ─────────────────────────────────────────────────────
 
   Future<void> goToMyLocation() async {

@@ -8,12 +8,14 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/triage_badge.dart';
 import '../../providers/app_state.dart';
+import '../../providers/active_hazards_provider.dart';
+import '../../providers/hazard_provider.dart';
 import '../auth/auth_provider.dart';
 import 'map_controller.dart';
 import 'marker_icons.dart';
 import 'marker_layer.dart';
 import 'legend_widget.dart';
-import 'hazard_control_panel.dart'; // <-- 1. ADDED IMPORT HERE
+import 'hazard_control_panel.dart';
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
@@ -100,13 +102,73 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  // ── Build hazard circles from active hazards ─────────────────────────────
+  Set<Circle> _buildHazardCircles(List<ActiveHazard> hazards) {
+    final circles = <Circle>{};
+    for (final h in hazards) {
+      if (h.type == 'Flood') continue;
+      final center = LatLng(h.centerLat, h.centerLng);
+      circles.addAll([
+        Circle(circleId: CircleId('${h.id}_stable'),   center: center, radius: h.radiusStable   * 1000, strokeColor: const Color(0xFF58A6FF), strokeWidth: 2, fillColor: const Color(0x1558A6FF)),
+        Circle(circleId: CircleId('${h.id}_elevated'), center: center, radius: h.radiusElevated * 1000, strokeColor: const Color(0xFFF1C40F), strokeWidth: 2, fillColor: Colors.transparent),
+        Circle(circleId: CircleId('${h.id}_high'),     center: center, radius: h.radiusHigh     * 1000, strokeColor: const Color(0xFFF39C12), strokeWidth: 2, fillColor: Colors.transparent),
+        Circle(circleId: CircleId('${h.id}_critical'), center: center, radius: h.radiusCritical * 1000, strokeColor: const Color(0xFFFF4D4D), strokeWidth: 2, fillColor: const Color(0x14FF4D4D)),
+      ]);
+    }
+    return circles;
+  }
+
+  Set<Marker> _buildHazardMarkers(List<ActiveHazard> hazards) => {
+    for (final h in hazards)
+      if (h.type != 'Flood')
+        Marker(
+          markerId: MarkerId('hz_${h.id}'),
+          position: LatLng(h.centerLat, h.centerLng),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: InfoWindow(title: 'ACTIVE: ${h.type}'),
+          zIndexInt: 500,
+        ),
+  };
+
   @override
   Widget build(BuildContext context) {
-    final households = ref.watch(householdProvider);
-    final assets     = ref.watch(assetProvider);
-    final ctrl       = ref.watch(mapControllerProvider.notifier);
-    final mapState   = ref.watch(mapControllerProvider);
-    final isRescuer  = ref.watch(authProvider).role == UserRole.rescuer;
+    final households    = ref.watch(householdProvider);
+    final assets        = ref.watch(assetProvider);
+    final ctrl          = ref.watch(mapControllerProvider.notifier);
+    final mapState      = ref.watch(mapControllerProvider);
+    final isRescuer     = ref.watch(authProvider).role == UserRole.rescuer;
+    final activeHazards = ref.watch(activeHazardsProvider);
+    final isPicking     = ref.watch(pickingLocationProvider);
+    final pendingCoords = ref.watch(pendingCoordsProvider);
+
+    // Auto-pan to hazard center when a new hazard is activated
+    ref.listen<List<ActiveHazard>>(activeHazardsProvider, (prev, next) {
+      if (next.isEmpty) return;
+      final prevIds = prev?.map((h) => h.id).toSet() ?? {};
+      final newHazard = next.firstWhere(
+        (h) => !prevIds.contains(h.id) && h.type != 'Flood',
+        orElse: () => next.first,
+      );
+      if (!prevIds.contains(newHazard.id) && newHazard.type != 'Flood') {
+        ctrl.animateTo(LatLng(newHazard.centerLat, newHazard.centerLng), zoom: 12);
+      }
+    });
+
+    final hazardCircles  = _buildHazardCircles(activeHazards);
+    final hazardMarkers  = _buildHazardMarkers(activeHazards);
+
+    // Pending coords marker (dashed circle while admin is picking location)
+    final pendingMarker = pendingCoords != null
+        ? <Marker>{
+            Marker(
+              markerId: const MarkerId('pending_pin'),
+              position: pendingCoords,
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+              infoWindow: const InfoWindow(title: 'Pinned location'),
+              zIndexInt: 999,
+            ),
+          }
+        : <Marker>{};
 
     // Rebuild markers when data changes or icons first load
     if (_iconsPreloaded &&
@@ -138,8 +200,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             initialCameraPosition: _initialCamera,
             onMapCreated: ctrl.onMapCreated,
             onCameraMove: ctrl.onCameraMove,
-            markers: _markers,
+            markers: {..._markers, ...hazardMarkers, ...pendingMarker},
             polylines: mapState.polylines,
+            circles: hazardCircles,
             mapType: mapState.mapType,
             style: _cleanMapStyle,
             myLocationEnabled: false,
@@ -149,7 +212,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             compassEnabled: false,
             tiltGesturesEnabled: true,
             rotateGesturesEnabled: true,
-            onTap: (_) => ctrl.selectHousehold(null),
+            onTap: (pos) {
+              if (isPicking) {
+                ref.read(pendingCoordsProvider.notifier).state = pos;
+                ref.read(pickingLocationProvider.notifier).state = false;
+                return;
+              }
+              ctrl.selectHousehold(null);
+            },
           ),
 
           // ── Search bar ────────────────────────────────────────────────
@@ -159,6 +229,46 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               child: _SearchBar(ctrl: ctrl, isSearching: mapState.isSearching),
             ),
           ),
+
+          // ── Pick-location banner (admin pinning household on map) ─────
+          if (isPicking)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF58A6FF),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8)],
+                  ),
+                  child: const Text(
+                    '📍 Tap map to pin household location',
+                    style: TextStyle(color: Color(0xFF0D1117), fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ),
+          if (isPicking)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              right: 12,
+              child: GestureDetector(
+                onTap: () => ref.read(pickingLocationProvider.notifier).state = false,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('✕ Cancel',
+                      style: TextStyle(color: Color(0xFFC9D1D9), fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
 
           // ── Hazard Control Panel ──────────────────────────────────────
           Positioned(
