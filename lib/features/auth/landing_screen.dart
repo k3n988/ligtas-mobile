@@ -1044,38 +1044,38 @@ class _LandingMapControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          width: 44,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2))],
-          ),
-          child: Column(
-            children: [
-              _btn(icon: Icons.fullscreen, onTap: onReset),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-      ],
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _btn(Icons.add, onZoomIn),
+          _divider(),
+          _btn(Icons.remove, onZoomOut),
+          _divider(),
+          _btn(Icons.explore_outlined, onReset),
+          _divider(),
+          _btn(Icons.my_location, onMyLocation),
+          _divider(),
+          _btn(isSatellite ? Icons.map_outlined : Icons.satellite_outlined, onToggleMap),
+        ],
+      ),
     );
   }
 
-  Widget _btn({required IconData icon, required VoidCallback onTap}) =>
-      Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            height: 44,
-            child: Center(child: Icon(icon, size: 24, color: _textPrimary)),
-          ),
+  Widget _btn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(icon, size: 20, color: _textPrimary),
         ),
       );
+
+  Widget _divider() => const Divider(height: 1, thickness: 1, color: _border);
 }
 
 // ── Custom Marker Popup ──────────────────────────────────────────────────────
