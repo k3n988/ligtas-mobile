@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,7 @@ import '../map/marker_layer.dart';
 import 'login_modal.dart';
 import '../map/hazard_control_panel.dart';
 import '../../core/models/triage_level.dart';
+import '../../providers/active_hazards_provider.dart';
 
 // ── Web Design System Colors (Light Mode Extracted from Screenshots) ──
 const _bgBase = Color(0xFFF0F4F8);       // Light grayish-blue background for the sheet
@@ -51,6 +53,54 @@ const Map<String, LatLng> _cityCoords = {
 const Map<String, List<Map<String, String>>> _hotlines = {
   'Bacolod City': [
     {'label': 'CDRRMO',             'number': '(034) 434-0116'},
+    {'label': 'BFP Bacolod',        'number': '(034) 432-5401'},
+    {'label': 'PNP Bacolod',        'number': '(034) 433-3060'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Talisay City': [
+    {'label': 'MDRRMO Talisay',     'number': '(034) 495-0114'},
+    {'label': 'BFP Talisay',        'number': '(034) 495-0888'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Silay City': [
+    {'label': 'MDRRMO Silay',       'number': '(034) 495-5270'},
+    {'label': 'BFP Silay',          'number': '(034) 495-5116'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Bago City': [
+    {'label': 'CDRRMO Bago',        'number': '(034) 461-0333'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Cadiz City': [
+    {'label': 'MDRRMO Cadiz',       'number': '(034) 493-0365'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Escalante City': [
+    {'label': 'MDRRMO Escalante',   'number': '(034) 454-0011'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Himamaylan City': [
+    {'label': 'MDRRMO Himamaylan',  'number': '(034) 388-2154'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Kabankalan City': [
+    {'label': 'CDRRMO Kabankalan',  'number': '(034) 471-2063'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'La Carlota City': [
+    {'label': 'MDRRMO La Carlota',  'number': '(034) 460-0335'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Sagay City': [
+    {'label': 'CDRRMO Sagay',       'number': '(034) 488-0333'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'San Carlos City': [
+    {'label': 'CDRRMO San Carlos',  'number': '(034) 312-5240'},
+    {'label': 'National Emergency', 'number': '911'},
+  ],
+  'Victorias City': [
+    {'label': 'MDRRMO Victorias',   'number': '(034) 399-2100'},
     {'label': 'National Emergency', 'number': '911'},
   ],
 };
@@ -64,56 +114,118 @@ class LandingScreen extends ConsumerStatefulWidget {
 
 class _LandingScreenState extends ConsumerState<LandingScreen> {
   String? _city;
+  String? _barangay;
   Household? _selectedHousehold;
+
+  // Area status
+  Map<String, dynamic>? _areaStatus;
+  bool _fetchingStatus = false;
+  bool _noStatusData   = false;
+  LatLng? _selectedCoords;
+
+  final _dio = Dio();
 
   GoogleMapController? _mapController;
   Set<Marker> _markers    = {};
   MapType     _mapType    = MapType.normal;
 
-  // ── Volcano Coordinates & Hazard Rings ──
-  final LatLng _volcanoCoords = const LatLng(10.4102, 123.1300);
-
-  Set<Circle> get _hazardRings {
-    return {
-      Circle(
-        circleId: const CircleId('critical_1km'),
-        center: _volcanoCoords,
-        radius: 1000, // 1km
-        strokeColor: Colors.red,
-        strokeWidth: 2,
-        fillColor: Colors.red.withValues(alpha: 0.1),
-      ),
-      Circle(
-        circleId: const CircleId('high_3km'),
-        center: _volcanoCoords,
-        radius: 3000, 
-        strokeColor: Colors.orange,
-        strokeWidth: 2,
-        fillColor: Colors.transparent,
-      ),
-      Circle(
-        circleId: const CircleId('elevated_5km'),
-        center: _volcanoCoords,
-        radius: 5000,
-        strokeColor: Colors.amber,
-        strokeWidth: 2,
-        fillColor: Colors.transparent,
-      ),
-      Circle(
-        circleId: const CircleId('stable_10km'),
-        center: _volcanoCoords,
-        radius: 10000,
-        strokeColor: Colors.blue,
-        strokeWidth: 2,
-        fillColor: Colors.transparent,
-      ),
-    };
-  }
 
   static const double _snapMin = 0.11; 
   static const double _snapMax = 0.85;
 
   final DraggableScrollableController _sheetCtrl = DraggableScrollableController();
+
+  // ── Haversine distance ────────────────────────────────────────────────────
+  double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
+    const r = 6371.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLng = (lng2 - lng1) * math.pi / 180;
+    final a = math.pow(math.sin(dLat / 2), 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.pow(math.sin(dLng / 2), 2);
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  String _hazardZoneLabel(double distKm, Map<String, dynamic> radii) {
+    final critical = (radii['radius_critical'] as num?)?.toDouble() ?? 0;
+    final high     = (radii['radius_high']     as num?)?.toDouble() ?? 0;
+    final elevated = (radii['radius_elevated'] as num?)?.toDouble() ?? 0;
+    final stable   = (radii['radius_stable']   as num?)?.toDouble() ?? 0;
+    if (distKm <= critical) return 'Critical Zone';
+    if (distKm <= high)     return 'High-Risk Zone';
+    if (distKm <= elevated) return 'Elevated Zone';
+    if (distKm <= stable)   return 'Stable Zone';
+    return 'Outside Hazard Area';
+  }
+
+  Color _hazardZoneColor(double distKm, Map<String, dynamic> radii) {
+    final critical = (radii['radius_critical'] as num?)?.toDouble() ?? 0;
+    final high     = (radii['radius_high']     as num?)?.toDouble() ?? 0;
+    final elevated = (radii['radius_elevated'] as num?)?.toDouble() ?? 0;
+    final stable   = (radii['radius_stable']   as num?)?.toDouble() ?? 0;
+    if (distKm <= critical) return const Color(0xFFDC2626);
+    if (distKm <= high)     return const Color(0xFFF97316);
+    if (distKm <= elevated) return const Color(0xFFEAB308);
+    if (distKm <= stable)   return const Color(0xFF3B82F6);
+    return const Color(0xFF22C55E);
+  }
+
+  String _hazardAdvisory(String type) {
+    switch (type.toLowerCase()) {
+      case 'volcano':
+        return 'Ashfall warning. Stay indoors, seal windows, wear an N95 mask when going outside, and prepare an emergency go-bag with essential documents, medicine, and 3-day supplies.';
+      case 'flood':
+        return 'Monitor water levels closely. If you live near riverbanks or low-lying areas, evacuate immediately to the nearest evacuation center. Do not cross flooded roads.';
+      case 'earthquake':
+        return 'Aftershocks may occur. Stay away from damaged structures. Inspect your home for gas leaks and structural damage before re-entering.';
+      case 'typhoon':
+        return 'Secure loose objects outdoors. Stay indoors away from windows. Follow the local DRRMO for evacuation orders.';
+      case 'landslide':
+        return 'Avoid slopes and hillsides. Evacuate if you hear rumbling or notice tilting trees. Do not return until authorities declare it safe.';
+      default:
+        return 'A hazard has been detected near your area. Stay alert and follow the instructions of your local DRRMO.';
+    }
+  }
+
+  Future<void> _geocodeBarangay(String barangay, String city) async {
+    try {
+      final res = await _dio.get(
+        'https://maps.googleapis.com/maps/api/geocode/json',
+        queryParameters: {
+          'address': '$barangay, $city, Negros Occidental, Philippines',
+          'key': ApiKeys.googleMaps,
+        },
+      );
+      final results = res.data['results'] as List?;
+      if (results != null && results.isNotEmpty) {
+        final loc = results[0]['geometry']['location'];
+        final coords = LatLng(loc['lat'] as double, loc['lng'] as double);
+        if (mounted) setState(() => _selectedCoords = coords);
+        _mapController?.animateCamera(CameraUpdate.newLatLngZoom(coords, 16));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadAreaStatus(String city, String barangay) async {
+    setState(() { _fetchingStatus = true; _noStatusData = false; _areaStatus = null; });
+    try {
+      final rows = await Supabase.instance.client
+          .from('area_status')
+          .select('alert_level, advisory, updated_at')
+          .eq('city', city)
+          .eq('barangay', barangay)
+          .limit(1);
+      if (!mounted) return;
+      if (rows.isEmpty) {
+        setState(() { _fetchingStatus = false; _noStatusData = true; });
+      } else {
+        setState(() { _fetchingStatus = false; _areaStatus = Map<String, dynamic>.from(rows.first); });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _fetchingStatus = false; _noStatusData = true; });
+    }
+  }
 
   @override
   void initState() {
@@ -129,6 +241,7 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   void dispose() {
     _mapController?.dispose();
     _sheetCtrl.dispose();
+    _dio.close();
     super.dispose();
   }
 
@@ -193,21 +306,12 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
       
       final assetMarkers = await buildAssetMarkers(fetchedAssets);
 
-      // 4. Create the Volcano Origin Marker
-      final volcanoMarker = Marker(
-        markerId: const MarkerId('volcano_center'),
-        position: _volcanoCoords,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: const InfoWindow(title: 'ACTIVE: Volcano'),
-      );
-
-      // 5. Update state
+      // 4. Update state — hazard markers are built dynamically in build()
       if (mounted) {
         setState(() {
           _markers = {
             ...hhMarkers,
             ...assetMarkers,
-            volcanoMarker,
           };
         });
       }
@@ -226,8 +330,41 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     );
   }
 
+  // Build dynamic hazard circles from live provider data
+  Set<Circle> _buildHazardCircles(List<ActiveHazard> hazards) {
+    final circles = <Circle>{};
+    for (final h in hazards) {
+      if (h.type == 'Flood') continue; // flood uses polygons, not rings
+      final center = LatLng(h.centerLat, h.centerLng);
+      circles.addAll([
+        Circle(circleId: CircleId('${h.id}_critical'), center: center, radius: h.radiusCritical * 1000, strokeColor: const Color(0xFFFF4D4D), strokeWidth: 2, fillColor: const Color(0x19FF4D4D)),
+        Circle(circleId: CircleId('${h.id}_high'),     center: center, radius: h.radiusHigh     * 1000, strokeColor: const Color(0xFFF39C12), strokeWidth: 2, fillColor: Colors.transparent),
+        Circle(circleId: CircleId('${h.id}_elevated'), center: center, radius: h.radiusElevated * 1000, strokeColor: const Color(0xFFF1C40F), strokeWidth: 2, fillColor: Colors.transparent),
+        Circle(circleId: CircleId('${h.id}_stable'),   center: center, radius: h.radiusStable   * 1000, strokeColor: const Color(0xFF58A6FF), strokeWidth: 2, fillColor: Colors.transparent),
+      ]);
+    }
+    return circles;
+  }
+
+  Set<Marker> _buildHazardMarkers(List<ActiveHazard> hazards) {
+    return {
+      for (final h in hazards)
+        if (h.type != 'Flood')
+          Marker(
+            markerId: MarkerId('hazard_${h.id}'),
+            position: LatLng(h.centerLat, h.centerLng),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            infoWindow: InfoWindow(title: 'ACTIVE: ${h.type}'),
+          ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
+    final activeHazards = ref.watch(activeHazardsProvider);
+    final hazardCircles = _buildHazardCircles(activeHazards);
+    final hazardMarkers = _buildHazardMarkers(activeHazards);
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
@@ -237,8 +374,8 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
             child: GoogleMap(
               initialCameraPosition: _initialCamera,
               mapType: _mapType,
-              markers: _markers,          
-              circles: _hazardRings,      
+              markers: {..._markers, ...hazardMarkers},
+              circles: hazardCircles,
               onMapCreated: _onMapCreated,
               myLocationEnabled: false,
               myLocationButtonEnabled: false,
@@ -326,20 +463,121 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                                   value: _city,
                                   items: negrosOccidentalCities,
                                   onChanged: (v) {
-                                    setState(() => _city = v);
+                                    setState(() {
+                                      _city = v;
+                                      _barangay = null;
+                                      _areaStatus = null;
+                                      _noStatusData = false;
+                                      _selectedCoords = null;
+                                    });
                                     if (v != null) _panToCity(v);
                                   },
                                 ),
                                 const SizedBox(height: 12),
                                 _Dropdown(
                                   hint: '- Select Barangay -',
-                                  value: null,
-                                  items: const [], 
-                                  onChanged: (v) {},
+                                  value: _barangay,
+                                  items: _city != null ? (cityBarangays[_city] ?? []) : [],
+                                  enabled: _city != null,
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _barangay = v;
+                                      _areaStatus = null;
+                                      _noStatusData = false;
+                                    });
+                                    if (v != null && _city != null) {
+                                      _geocodeBarangay(v, _city!);
+                                      _loadAreaStatus(_city!, v);
+                                    }
+                                  },
                                 ),
                               ],
                             ),
                           ),
+                          // ── Area status / advisory ──────────────────────
+                          if (_city != null && _barangay != null) ...[
+                            const SizedBox(height: 16),
+                            if (_fetchingStatus)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                              )
+                            else if (_noStatusData)
+                              _SectionCard(
+                                title: 'AREA STATUS',
+                                child: Text(
+                                  'No status posted yet for $_barangay, $_city.',
+                                  style: const TextStyle(color: _textMuted, fontSize: 13),
+                                ),
+                              )
+                            else if (_areaStatus != null) ...[
+                              _AreaAlertCard(status: _areaStatus!, city: _city!, barangay: _barangay!),
+                              if (_areaStatus!['advisory'] != null && (_areaStatus!['advisory'] as String).isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                _SectionCard(
+                                  title: 'LGU ADVISORY',
+                                  child: Text(
+                                    _areaStatus!['advisory'] as String,
+                                    style: const TextStyle(color: _textPrimary, fontSize: 13, height: 1.6),
+                                  ),
+                                ),
+                              ],
+                            ],
+                            // ── Hazard zone advisory ───────────────────────
+                            if (_selectedCoords != null)
+                              ...activeHazards.map((hazard) {
+                                final distKm = _haversineKm(
+                                  _selectedCoords!.latitude, _selectedCoords!.longitude,
+                                  hazard.centerLat,
+                                  hazard.centerLng,
+                                );
+                                final zone  = _hazardZoneLabel(distKm, {
+                                  'radius_critical': hazard.radiusCritical,
+                                  'radius_high':     hazard.radiusHigh,
+                                  'radius_elevated': hazard.radiusElevated,
+                                  'radius_stable':   hazard.radiusStable,
+                                });
+                                final color = _hazardZoneColor(distKm, {
+                                  'radius_critical': hazard.radiusCritical,
+                                  'radius_high':     hazard.radiusHigh,
+                                  'radius_elevated': hazard.radiusElevated,
+                                  'radius_stable':   hazard.radiusStable,
+                                });
+                                final advisory = _hazardAdvisory(hazard.type);
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.08),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: color.withValues(alpha: 0.5)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'HAZARD-AWARE ADVISORY',
+                                          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '${hazard.type} — $zone',
+                                          style: const TextStyle(color: _textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Approx. ${distKm.toStringAsFixed(1)} km from hazard center.',
+                                          style: const TextStyle(color: _textMuted, fontSize: 12),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Text(advisory, style: const TextStyle(color: _textPrimary, fontSize: 13, height: 1.6)),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
+                          ],
                           const SizedBox(height: 16),
                           _SectionCard(
                             title: 'EMERGENCY HOTLINES',
@@ -968,32 +1206,109 @@ class _Dropdown extends StatelessWidget {
   final String? value;
   final List<String> items;
   final ValueChanged<String?>? onChanged;
+  final bool enabled;
 
   const _Dropdown({
     required this.hint, required this.value, required this.items, required this.onChanged,
+    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: _bgSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _border),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          hint: Text(hint, style: const TextStyle(color: _textMuted, fontSize: 14)),
-          isExpanded: true,
-          dropdownColor: _bgSurface, 
-          icon: const Icon(Icons.keyboard_arrow_down, color: _textPrimary),
-          style: const TextStyle(color: _textPrimary, fontSize: 14),
-          onChanged: onChanged,
-          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: _bgSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _border),
         ),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: value,
+            hint: Text(hint, style: const TextStyle(color: _textMuted, fontSize: 14)),
+            isExpanded: true,
+            dropdownColor: _bgSurface,
+            icon: const Icon(Icons.keyboard_arrow_down, color: _textPrimary),
+            style: const TextStyle(color: _textPrimary, fontSize: 14),
+            onChanged: enabled ? onChanged : null,
+            items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Area Alert Card ───────────────────────────────────────────────────────────
+
+class _AreaAlertCard extends StatelessWidget {
+  final Map<String, dynamic> status;
+  final String city;
+  final String barangay;
+
+  const _AreaAlertCard({required this.status, required this.city, required this.barangay});
+
+  @override
+  Widget build(BuildContext context) {
+    final level = status['alert_level'] as String? ?? 'Normal';
+    final updatedAt = status['updated_at'] as String?;
+
+    Color levelColor;
+    Color levelBg;
+    Color levelBorder;
+    switch (level) {
+      case 'Pre-emptive Evacuation':
+        levelColor  = const Color(0xFFF85149);
+        levelBg     = const Color(0xFF2D1217);
+        levelBorder = const Color(0xFFDA3633);
+        break;
+      case 'Monitoring':
+        levelColor  = const Color(0xFFD29922);
+        levelBg     = const Color(0xFF1F1A0E);
+        levelBorder = const Color(0xFF9E6A03);
+        break;
+      default:
+        levelColor  = const Color(0xFF3FB950);
+        levelBg     = const Color(0xFF0D2016);
+        levelBorder = const Color(0xFF238636);
+    }
+
+    String? timeLabel;
+    if (updatedAt != null) {
+      try {
+        final dt = DateTime.parse(updatedAt).toLocal();
+        timeLabel = '${dt.month}/${dt.day}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+      } catch (_) {}
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: levelBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: levelBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'BARANGAY ALERT LEVEL',
+            style: TextStyle(color: levelColor, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            level,
+            style: TextStyle(color: levelColor, fontSize: 17, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$barangay, $city${timeLabel != null ? ' · Updated $timeLabel' : ''}',
+            style: const TextStyle(color: _textMuted, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
