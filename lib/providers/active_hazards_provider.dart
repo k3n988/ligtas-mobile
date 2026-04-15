@@ -134,3 +134,12 @@ final activeHazardsProvider =
     StateNotifierProvider<ActiveHazardsNotifier, List<ActiveHazard>>(
   (ref) => ActiveHazardsNotifier(),
 );
+
+// ── Hazard center picking state ───────────────────────────────────────────────
+
+/// True while admin is in "tap map to pick hazard center" mode.
+final isSelectingHazardCenterProvider = StateProvider<bool>((ref) => false);
+
+/// Holds the tapped coords until admin confirms and activates.
+final draftHazardCenterProvider =
+    StateProvider<({double lat, double lng})?> ((ref) => null);

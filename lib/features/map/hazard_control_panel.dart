@@ -23,13 +23,11 @@ class HazardControlPanel extends ConsumerStatefulWidget {
 }
 
 class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
-  bool   _isOpen    = false;
+  bool   _isOpen      = false;
   String _focusedType = '';
+  String _hazardType  = 'Volcano';
 
-  // Admin inputs
-  String _hazardType = 'Volcano';
-  final _latCtrl      = TextEditingController();
-  final _lngCtrl      = TextEditingController();
+  // Radii inputs
   final _criticalCtrl = TextEditingController(text: '1.0');
   final _highCtrl     = TextEditingController(text: '3.0');
   final _elevatedCtrl = TextEditingController(text: '5.0');
@@ -38,8 +36,6 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
 
   @override
   void dispose() {
-    _latCtrl.dispose();
-    _lngCtrl.dispose();
     _criticalCtrl.dispose();
     _highCtrl.dispose();
     _elevatedCtrl.dispose();
@@ -48,78 +44,78 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
   }
 
   void _prefillFromHazard(ActiveHazard h) {
-    _hazardType = h.type;
-    _latCtrl.text      = h.centerLat.toStringAsFixed(5);
-    _lngCtrl.text      = h.centerLng.toStringAsFixed(5);
+    setState(() => _hazardType = h.type);
     _criticalCtrl.text = h.radiusCritical.toString();
     _highCtrl.text     = h.radiusHigh.toString();
     _elevatedCtrl.text = h.radiusElevated.toString();
     _stableCtrl.text   = h.radiusStable.toString();
+    // Also pre-fill the draft center so it shows immediately
+    ref.read(draftHazardCenterProvider.notifier).state =
+        (lat: h.centerLat, lng: h.centerLng);
   }
 
   Future<void> _activate() async {
-    final lat = double.tryParse(_latCtrl.text.trim());
-    final lng = double.tryParse(_lngCtrl.text.trim());
-    if (lat == null || lng == null) return;
+    final center = ref.read(draftHazardCenterProvider);
+    if (center == null) return;
     setState(() => _saving = true);
     await ref.read(activeHazardsProvider.notifier).activate(
           type:      _hazardType,
-          centerLat: lat,
-          centerLng: lng,
+          centerLat: center.lat,
+          centerLng: center.lng,
           critical:  double.tryParse(_criticalCtrl.text) ?? 1,
-          high:      double.tryParse(_highCtrl.text) ?? 3,
+          high:      double.tryParse(_highCtrl.text)     ?? 3,
           elevated:  double.tryParse(_elevatedCtrl.text) ?? 5,
-          stable:    double.tryParse(_stableCtrl.text) ?? 10,
+          stable:    double.tryParse(_stableCtrl.text)   ?? 10,
         );
+    ref.read(draftHazardCenterProvider.notifier).state = null;
     setState(() { _saving = false; _isOpen = false; });
   }
 
   Future<void> _clear(String type) async {
     setState(() => _saving = true);
     await ref.read(activeHazardsProvider.notifier).clear(type);
+    ref.read(draftHazardCenterProvider.notifier).state = null;
     setState(() { _saving = false; _isOpen = false; });
   }
 
   @override
   Widget build(BuildContext context) {
-    final hazards = ref.watch(activeHazardsProvider);
-    final isAdmin = ref.watch(authProvider).isAdmin;
+    final hazards      = ref.watch(activeHazardsProvider);
+    final isAdmin      = ref.watch(authProvider).isAdmin;
+    final draftCenter  = ref.watch(draftHazardCenterProvider);
+    final isSelecting  = ref.watch(isSelectingHazardCenterProvider);
 
-    // Hide entirely for non-admin when no hazards
+    // Auto-prefill when focused hazard changes and it's already active
+    final focused = hazards.isEmpty ? null
+        : hazards.firstWhere((h) => h.type == _focusedType, orElse: () => hazards.first);
+
     if (hazards.isEmpty && !isAdmin) return const SizedBox.shrink();
-
-    final focused = hazards.isEmpty
-        ? null
-        : hazards.firstWhere(
-            (h) => h.type == _focusedType,
-            orElse: () => hazards.first,
-          );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ── Top bar: HAZARD LAYER + active badges ───────────────────────
+        // ── Top bar ─────────────────────────────────────────────────────
         Wrap(
           alignment: WrapAlignment.center,
           spacing: 8,
           runSpacing: 6,
           children: [
-            // Main toggle
             _TopBtn(
-              label: 'HAZARD LAYER',
+              label: hazards.isEmpty
+                  ? 'HAZARD LAYER · ${_hazardType.toUpperCase()}'
+                  : 'HAZARD LAYER',
               active: hazards.isNotEmpty,
               onTap: () => setState(() => _isOpen = !_isOpen),
             ),
-            // One badge per active hazard
             ...hazards.map((h) => _ActiveBadge(
-                  label: 'ACTIVE: ${h.type.toUpperCase()}',
+                  label:   'ACTIVE: ${h.type.toUpperCase()}',
                   focused: _focusedType == h.type || hazards.length == 1,
-                  onTap: () {
+                  onTap:   () {
                     setState(() {
                       _focusedType = h.type;
-                      _isOpen = true;
-                      _prefillFromHazard(h);
+                      _isOpen      = true;
                     });
+                    _prefillFromHazard(h);
                   },
                 )),
           ],
@@ -127,15 +123,18 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
 
         if (_isOpen) ...[
           const SizedBox(height: 10),
-          // ── Panel ─────────────────────────────────────────────────────
+
+          // ── Panel ──────────────────────────────────────────────────────
           Container(
             width: 310,
-            constraints: const BoxConstraints(maxHeight: 480),
+            constraints: const BoxConstraints(maxHeight: 500),
             decoration: BoxDecoration(
               color: const Color(0xFF161B22),
               border: Border.all(color: const Color(0xFF30363D)),
               borderRadius: BorderRadius.circular(10),
-              boxShadow: const [BoxShadow(color: Colors.black87, blurRadius: 20, offset: Offset(0, 8))],
+              boxShadow: const [
+                BoxShadow(color: Colors.black87, blurRadius: 20, offset: Offset(0, 8)),
+              ],
             ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(14),
@@ -145,12 +144,8 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
                   // Header
                   Row(
                     children: [
-                      Container(
-                        width: 3, height: 18,
-                        color: const Color(0xFFFF4D4D),
-                        margin: const EdgeInsets.only(right: 8),
-                      ),
-                      const Text('HAZARD LAYER',
+                      Container(width: 3, height: 18, color: const Color(0xFFFF4D4D), margin: const EdgeInsets.only(right: 8)),
+                      const Text('⚠ HAZARD LAYER',
                           style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1)),
                       const Spacer(),
                       if (!isAdmin)
@@ -163,7 +158,10 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
                   ),
                   const SizedBox(height: 14),
 
-                  if (isAdmin) _buildAdminView(hazards, focused) else _buildReadOnlyView(hazards, focused),
+                  if (isAdmin)
+                    _buildAdminView(hazards, focused, draftCenter, isSelecting)
+                  else
+                    _buildReadOnlyView(hazards, focused),
                 ],
               ),
             ),
@@ -173,14 +171,25 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
     );
   }
 
-  Widget _buildAdminView(List<ActiveHazard> hazards, ActiveHazard? focused) {
+  // ── Admin panel ──────────────────────────────────────────────────────────
+
+  Widget _buildAdminView(
+    List<ActiveHazard> hazards,
+    ActiveHazard? focused,
+    ({double lat, double lng})? draftCenter,
+    bool isSelecting,
+  ) {
+    final isFlood    = _hazardType == 'Flood';
+    final canActivate = isFlood ? false : draftCenter != null;
+    final hasMatchingActive = hazards.any((h) => h.type == _hazardType);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Active badge
-        if (focused != null)
+        // Active banner
+        if (hasMatchingActive && focused != null)
           _ActiveStatusBanner(hazard: focused),
-        const SizedBox(height: 12),
+        if (hasMatchingActive) const SizedBox(height: 12),
 
         // Type selector
         _label('Disaster Type'),
@@ -189,76 +198,128 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
           items: _hazardTypes,
           onChanged: (v) {
             if (v == null) return;
-            setState(() {
-              _hazardType = v;
-              final existing = ref.read(activeHazardsProvider)
-                  .where((h) => h.type == v)
-                  .firstOrNull;
-              if (existing != null) _prefillFromHazard(existing);
-            });
+            setState(() => _hazardType = v);
+            final existing = ref.read(activeHazardsProvider)
+                .where((h) => h.type == v).firstOrNull;
+            if (existing != null) _prefillFromHazard(existing);
           },
         ),
         const SizedBox(height: 12),
 
-        // Center coords
-        _label('Hazard Center (lat, lng)'),
-        Row(
-          children: [
-            Expanded(child: _textInput(_latCtrl, 'Latitude')),
+        if (!isFlood) ...[
+          // ── Hazard Radii ──────────────────────────────────────────────
+          _label('Hazard Radii (km)'),
+          Row(children: [
+            Expanded(child: _radiiInput('Critical', _criticalCtrl, _ringColors['critical']!)),
             const SizedBox(width: 8),
-            Expanded(child: _textInput(_lngCtrl, 'Longitude')),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Radii
-        _label('Hazard Radii (km)'),
-        Row(children: [
-          Expanded(child: _radiiInput('Critical', _criticalCtrl, _ringColors['critical']!)),
-          const SizedBox(width: 8),
-          Expanded(child: _radiiInput('High',     _highCtrl,     _ringColors['high']!)),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(child: _radiiInput('Elevated', _elevatedCtrl, _ringColors['elevated']!)),
-          const SizedBox(width: 8),
-          Expanded(child: _radiiInput('Stable',   _stableCtrl,   _ringColors['stable']!)),
-        ]),
-        const SizedBox(height: 14),
-
-        // Action buttons
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF238636),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-            ),
-            onPressed: _saving ? null : _activate,
-            child: _saving
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Text('Activate Hazard Layer', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-          ),
-        ),
-        if (focused != null && focused.type == _hazardType) ...[
+            Expanded(child: _radiiInput('High',     _highCtrl,     _ringColors['high']!)),
+          ]),
           const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: _radiiInput('Elevated', _elevatedCtrl, _ringColors['elevated']!)),
+            const SizedBox(width: 8),
+            Expanded(child: _radiiInput('Stable',   _stableCtrl,   _ringColors['stable']!)),
+          ]),
+          const SizedBox(height: 12),
+
+          // ── Hazard Center ─────────────────────────────────────────────
+          _label('Hazard Center'),
+          if (draftCenter != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D2016),
+                border: Border.all(color: const Color(0xFF238636)),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '📍 ${draftCenter.lat.toStringAsFixed(5)}, ${draftCenter.lng.toStringAsFixed(5)}',
+                style: const TextStyle(color: Color(0xFF3FB950), fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+            )
+          else
+            Text(
+              isSelecting ? 'Tap on the map to set the epicenter...' : 'No center picked yet',
+              style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+            ),
+          const SizedBox(height: 8),
+
+          // Pick Center button
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFF85149),
-                side: const BorderSide(color: Color(0xFFDA3633)),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isSelecting ? const Color(0xFF21262D) : const Color(0xFF1F6FEB),
+                foregroundColor: isSelecting ? const Color(0xFF8B949E) : Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
               ),
-              onPressed: _saving ? null : () => _clear(_hazardType),
-              child: const Text('Clear Hazard Layer', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              onPressed: isSelecting ? null : () {
+                ref.read(isSelectingHazardCenterProvider.notifier).state = true;
+                setState(() => _isOpen = false); // hide panel while picking
+              },
+              icon: Icon(isSelecting ? Icons.hourglass_top : Icons.location_searching, size: 16),
+              label: Text(
+                isSelecting ? 'Tap map to pick...' : '📍 Pick Center on Map',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
             ),
           ),
+          const SizedBox(height: 14),
+        ] else ...[
+          // Flood type — inform admin
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1117),
+              border: Border.all(color: const Color(0xFF30363D)),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Text(
+              'Flood zones are drawn on the web admin panel. Activate to show current flood zones on the map.',
+              style: TextStyle(color: Color(0xFF8B949E), fontSize: 12, height: 1.5),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+
+        // ── Action buttons ────────────────────────────────────────────
+        if (!isFlood) ...[
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: canActivate ? const Color(0xFF238636) : const Color(0xFF21262D),
+                foregroundColor: canActivate ? Colors.white : const Color(0xFF8B949E),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: (_saving || !canActivate) ? null : _activate,
+              child: _saving
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('✅ Activate Hazard Layer', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
+          ),
+          if (hasMatchingActive) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFF85149),
+                  side: const BorderSide(color: Color(0xFFDA3633)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+                onPressed: _saving ? null : () => _clear(_hazardType),
+                child: const Text('🗑 Clear Hazard Layer', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              ),
+            ),
+          ],
         ],
       ],
     );
   }
+
+  // ── Read-only panel (rescuer / citizen) ────────────────────────────────────
 
   Widget _buildReadOnlyView(List<ActiveHazard> hazards, ActiveHazard? focused) {
     if (hazards.isEmpty) {
@@ -269,26 +330,31 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Hazard selector chips if multiple
-        if (hazards.length > 1)
+        // Multi-hazard selector chips
+        if (hazards.length > 1) ...[
           Wrap(
             spacing: 6,
             children: hazards.map((hz) => GestureDetector(
-              onTap: () => setState(() { _focusedType = hz.type; _prefillFromHazard(hz); }),
+              onTap: () {
+                setState(() => _focusedType = hz.type);
+                _prefillFromHazard(hz);
+              },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: (_focusedType == hz.type || (hazards.length == 1))
+                  color: _focusedType == hz.type
                       ? const Color(0xFF3D1A1A)
                       : const Color(0xFF21262D),
                   border: Border.all(color: const Color(0xFFDA3633).withValues(alpha: 0.6)),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(hz.type, style: const TextStyle(color: Color(0xFFFF4D4D), fontSize: 11, fontWeight: FontWeight.w700)),
+                child: Text(hz.type,
+                    style: const TextStyle(color: Color(0xFFFF4D4D), fontSize: 11, fontWeight: FontWeight.w700)),
               ),
             )).toList(),
           ),
-        if (hazards.length > 1) const SizedBox(height: 12),
+          const SizedBox(height: 12),
+        ],
 
         RichText(
           text: TextSpan(
@@ -312,46 +378,38 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
     );
   }
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
   Widget _readOnlyRadius(String label, double value, Color color) => Row(
         children: [
           Container(width: 6, height: 6, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 8),
-          Text('$label: ${value}km', style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+          Text('• $label: ${value}km', style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
         ],
       );
 
   Widget _label(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 5),
-        child: Text(text, style: const TextStyle(color: Color(0xFF8B949E), fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+        child: Text(text,
+            style: const TextStyle(
+                color: Color(0xFF8B949E), fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
       );
 
   Widget _dropdown({required String value, required List<String> items, required void Function(String?) onChanged}) =>
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(color: const Color(0xFF0D1117), border: Border.all(color: const Color(0xFF30363D)), borderRadius: BorderRadius.circular(4)),
+        decoration: BoxDecoration(
+            color: const Color(0xFF0D1117),
+            border: Border.all(color: const Color(0xFF30363D)),
+            borderRadius: BorderRadius.circular(4)),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<String>(
-            value: value, isExpanded: true,
+            value: value,
+            isExpanded: true,
             dropdownColor: const Color(0xFF161B22),
             style: const TextStyle(color: Colors.white, fontSize: 13),
             items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
             onChanged: onChanged,
-          ),
-        ),
-      );
-
-  Widget _textInput(TextEditingController ctrl, String hint) => Container(
-        height: 38,
-        decoration: BoxDecoration(color: const Color(0xFF0D1117), border: Border.all(color: const Color(0xFF30363D)), borderRadius: BorderRadius.circular(4)),
-        child: TextFormField(
-          controller: ctrl,
-          style: const TextStyle(color: Colors.white, fontSize: 12),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: InputDecoration(
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.only(left: 10, top: 10),
-            hintText: hint,
-            hintStyle: const TextStyle(color: Color(0xFF8B949E), fontSize: 11),
           ),
         ),
       );
@@ -367,19 +425,23 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
           const SizedBox(height: 4),
           Container(
             height: 36,
-            decoration: BoxDecoration(color: const Color(0xFF0D1117), border: Border.all(color: const Color(0xFF30363D)), borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(
+                color: const Color(0xFF0D1117),
+                border: Border.all(color: const Color(0xFF30363D)),
+                borderRadius: BorderRadius.circular(4)),
             child: TextFormField(
               controller: ctrl,
               style: const TextStyle(color: Colors.white, fontSize: 12),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(border: InputBorder.none, contentPadding: EdgeInsets.only(left: 8, bottom: 8)),
+              decoration: const InputDecoration(
+                  border: InputBorder.none, contentPadding: EdgeInsets.only(left: 8, bottom: 8)),
             ),
           ),
         ],
       );
 }
 
-// ── Small sub-widgets ─────────────────────────────────────────────────────────
+// ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _TopBtn extends StatelessWidget {
   final String label;
@@ -394,11 +456,14 @@ class _TopBtn extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
             color: active ? const Color(0xFF1F3044) : const Color(0xFF102338),
-            border: Border.all(color: active ? const Color(0xFF5DB0FF) : const Color(0xFF3C78AD), width: 1.5),
+            border: Border.all(
+                color: active ? const Color(0xFF5DB0FF) : const Color(0xFF3C78AD), width: 1.5),
             borderRadius: BorderRadius.circular(12),
             boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8)],
           ),
-          child: Text(label, style: const TextStyle(color: Color(0xFFD7EBFF), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+          child: Text(label,
+              style: const TextStyle(
+                  color: Color(0xFFD7EBFF), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
         ),
       );
 }
@@ -415,7 +480,10 @@ class _ActiveBadge extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF641A1A), Color(0xFF421010)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+            gradient: const LinearGradient(
+                colors: [Color(0xFF641A1A), Color(0xFF421010)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter),
             border: Border.all(color: const Color(0xFFD24B4B), width: focused ? 2 : 1.5),
             borderRadius: BorderRadius.circular(12),
             boxShadow: const [BoxShadow(color: Color(0x55571010), blurRadius: 12)],
@@ -425,7 +493,9 @@ class _ActiveBadge extends StatelessWidget {
             children: [
               const Icon(Icons.warning_amber_rounded, color: Color(0xFFFF6B6B), size: 14),
               const SizedBox(width: 6),
-              Text(label, style: const TextStyle(color: Color(0xFFFFE3E3), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
+              Text(label,
+                  style: const TextStyle(
+                      color: Color(0xFFFFE3E3), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
             ],
           ),
         ),

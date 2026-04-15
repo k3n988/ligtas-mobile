@@ -136,10 +136,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final assets        = ref.watch(assetProvider);
     final ctrl          = ref.watch(mapControllerProvider.notifier);
     final mapState      = ref.watch(mapControllerProvider);
-    final isRescuer     = ref.watch(authProvider).role == UserRole.rescuer;
-    final activeHazards = ref.watch(activeHazardsProvider);
-    final isPicking     = ref.watch(pickingLocationProvider);
-    final pendingCoords = ref.watch(pendingCoordsProvider);
+    final isRescuer          = ref.watch(authProvider).role == UserRole.rescuer;
+    final activeHazards      = ref.watch(activeHazardsProvider);
+    final isPicking          = ref.watch(pickingLocationProvider);
+    final pendingCoords      = ref.watch(pendingCoordsProvider);
+    final isPickingHazard    = ref.watch(isSelectingHazardCenterProvider);
+    final draftHazardCenter  = ref.watch(draftHazardCenterProvider);
 
     // Auto-pan to hazard center when a new hazard is activated
     ref.listen<List<ActiveHazard>>(activeHazardsProvider, (prev, next) {
@@ -156,6 +158,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     final hazardCircles  = _buildHazardCircles(activeHazards);
     final hazardMarkers  = _buildHazardMarkers(activeHazards);
+
+    // Draft hazard center marker
+    final draftHazardMarker = draftHazardCenter != null
+        ? <Marker>{
+            Marker(
+              markerId: const MarkerId('draft_hazard_center'),
+              position: LatLng(draftHazardCenter.lat, draftHazardCenter.lng),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+              infoWindow: const InfoWindow(title: 'Hazard epicenter'),
+              zIndexInt: 998,
+            ),
+          }
+        : <Marker>{};
 
     // Pending coords marker (dashed circle while admin is picking location)
     final pendingMarker = pendingCoords != null
@@ -200,7 +215,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             initialCameraPosition: _initialCamera,
             onMapCreated: ctrl.onMapCreated,
             onCameraMove: ctrl.onCameraMove,
-            markers: {..._markers, ...hazardMarkers, ...pendingMarker},
+            markers: {..._markers, ...hazardMarkers, ...pendingMarker, ...draftHazardMarker},
             polylines: mapState.polylines,
             circles: hazardCircles,
             mapType: mapState.mapType,
@@ -213,6 +228,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             tiltGesturesEnabled: true,
             rotateGesturesEnabled: true,
             onTap: (pos) {
+              if (isPickingHazard) {
+                ref.read(draftHazardCenterProvider.notifier).state = (lat: pos.latitude, lng: pos.longitude);
+                ref.read(isSelectingHazardCenterProvider.notifier).state = false;
+                return;
+              }
               if (isPicking) {
                 ref.read(pendingCoordsProvider.notifier).state = pos;
                 ref.read(pickingLocationProvider.notifier).state = false;
@@ -229,6 +249,46 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               child: _SearchBar(ctrl: ctrl, isSearching: mapState.isSearching),
             ),
           ),
+
+          // ── Pick-hazard-center banner ─────────────────────────────────
+          if (isPickingHazard)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF4D4D),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8)],
+                  ),
+                  child: const Text(
+                    '⚠ Tap map to set hazard epicenter',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ),
+          if (isPickingHazard)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              right: 12,
+              child: GestureDetector(
+                onTap: () => ref.read(isSelectingHazardCenterProvider.notifier).state = false,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('✕ Cancel',
+                      style: TextStyle(color: Color(0xFFC9D1D9), fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
 
           // ── Pick-location banner (admin pinning household on map) ─────
           if (isPicking)
