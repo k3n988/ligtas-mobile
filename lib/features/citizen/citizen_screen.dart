@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -447,6 +448,8 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
   Set<Marker>  _markers        = {};
   bool         _iconsPreloaded = false;
   List<Household> _lastHouseholds = [];
+  GoogleMapController? _mapController;
+  MapType _mapType = MapType.normal;
 
   static const _initial = CameraPosition(
     target: LatLng(10.6765, 122.9509),
@@ -459,6 +462,33 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
     preloadMarkerIcons().then((_) {
       if (mounted) setState(() => _iconsPreloaded = true);
     });
+  }
+
+  @override
+  void dispose() {
+    _mapController?.dispose();
+    super.dispose();
+  }
+
+  void _zoomIn()  => _mapController?.animateCamera(CameraUpdate.zoomIn());
+  void _zoomOut() => _mapController?.animateCamera(CameraUpdate.zoomOut());
+  void _resetBearing() => _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(CameraPosition(
+          target: _initial.target,
+          zoom: _initial.zoom,
+          tilt: 0,
+          bearing: 0,
+        )));
+  void _toggleMapType() => setState(() => _mapType =
+      _mapType == MapType.normal ? MapType.satellite : MapType.normal);
+
+  Future<void> _goToMyLocation() async {
+    try {
+      final pos = await Geolocator.getCurrentPosition();
+      _mapController?.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(target: LatLng(pos.latitude, pos.longitude), zoom: 17),
+      ));
+    } catch (_) {}
   }
 
   Future<void> _rebuildMarkers(List<Household> households) async {
@@ -486,15 +516,29 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
         GoogleMap(
           initialCameraPosition: _initial,
           markers:               _markers,
-          mapType:               MapType.normal,
+          mapType:               _mapType,
           myLocationButtonEnabled: false,
           zoomControlsEnabled:     false,
+          onMapCreated: (c) => _mapController = c,
         ),
         // Legend (bottom-left)
         Positioned(
           left:   0,
           bottom: 0,
           child:  const LegendWidget(),
+        ),
+        // Map controls (right side)
+        Positioned(
+          right:  12,
+          bottom: 80,
+          child:  _CitizenMapControls(
+            onZoomIn:      _zoomIn,
+            onZoomOut:     _zoomOut,
+            onReset:       _resetBearing,
+            onMyLocation:  _goToMyLocation,
+            onToggleMap:   _toggleMapType,
+            isSatellite:   _mapType == MapType.satellite,
+          ),
         ),
         // Asset indicator (top)
         Positioned(
@@ -1287,4 +1331,59 @@ class _CitizenRegistrationFormState
           child: Icon(icon, color: AppColors.textSecondary, size: 18),
         ),
       );
+}
+
+// ── Map controls for citizen map tab ─────────────────────────────────────────
+
+class _CitizenMapControls extends StatelessWidget {
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onMyLocation;
+  final VoidCallback onToggleMap;
+  final bool isSatellite;
+
+  const _CitizenMapControls({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onMyLocation,
+    required this.onToggleMap,
+    required this.isSatellite,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _btn(Icons.add, onZoomIn),
+          _divider(),
+          _btn(Icons.remove, onZoomOut),
+          _divider(),
+          _btn(Icons.explore_outlined, onReset),
+          _divider(),
+          _btn(Icons.my_location, onMyLocation),
+          _divider(),
+          _btn(isSatellite ? Icons.map_outlined : Icons.satellite_outlined, onToggleMap),
+        ],
+      ),
+    );
+  }
+
+  Widget _btn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(icon, size: 20, color: const Color(0xFF1E293B)),
+        ),
+      );
+
+  Widget _divider() => const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0));
 }
