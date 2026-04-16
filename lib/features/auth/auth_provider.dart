@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -51,21 +52,28 @@ const _testAccounts = {
 // ── Auth notifier ─────────────────────────────────────────────────────────────
 
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(const AuthState()) {
+  AuthNotifier() : super(const AuthState(isLoading: true)) {
     _init();
   }
 
   final _client = Supabase.instance.client;
+  final _storage = const FlutterSecureStorage();
   StreamSubscription<dynamic>? _authSub;
+  static const _authKey = 'ligtas_auth_state';
 
-  void _init() {
+  Future<void> _init() async {
+    await _restorePersistedAuth();
+
     final session = _client.auth.currentSession;
     if (session != null) {
       state = AuthState(
         isLoggedIn: true,
+        isLoading:  false,
         username:   session.user.email ?? 'User',
         role:       _roleFromUser(session.user),
       );
+    } else if (!state.isLoggedIn) {
+      state = state.copyWith(isLoading: false);
     }
 
     _authSub = _client.auth.onAuthStateChange.listen((data) {
@@ -77,16 +85,58 @@ class AuthNotifier extends StateNotifier<AuthState> {
           if (user != null) {
             state = AuthState(
               isLoggedIn: true,
+              isLoading:  false,
               username:   user.email ?? 'User',
               role:       _roleFromUser(user),
             );
+            unawaited(_persistAuthState());
           }
         case AuthChangeEvent.signedOut:
           state = const AuthState();
+          unawaited(_clearPersistedAuth());
         default:
           break;
       }
     });
+  }
+
+  Future<void> _restorePersistedAuth() async {
+    try {
+      final raw = await _storage.read(key: _authKey);
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final username = data['username'] as String?;
+      final roleName = data['role'] as String?;
+      if (username == null || roleName == null) return;
+      final role = UserRole.values.firstWhere(
+        (value) => value.name == roleName,
+        orElse: () => UserRole.unknown,
+      );
+      if (role == UserRole.unknown) return;
+      state = AuthState(
+        isLoggedIn: true,
+        isLoading: false,
+        username: username,
+        role: role,
+      );
+    } catch (_) {
+      await _clearPersistedAuth();
+    }
+  }
+
+  Future<void> _persistAuthState() async {
+    if (!state.isLoggedIn || state.username == null) return;
+    await _storage.write(
+      key: _authKey,
+      value: jsonEncode({
+        'username': state.username,
+        'role': state.role.name,
+      }),
+    );
+  }
+
+  Future<void> _clearPersistedAuth() async {
+    await _storage.delete(key: _authKey);
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -109,6 +159,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         username:   contact,
         role:       test.role,
       );
+      await _persistAuthState();
       return null;
     }
 
@@ -189,6 +240,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         username:   contact,
         role:       UserRole.citizen,
       );
+      await _persistAuthState();
       return null;
     } catch (e) {
       // ignore: avoid_print
@@ -221,6 +273,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         username:   contact,
         role:       UserRole.rescuer,
       );
+      await _persistAuthState();
       return null; // success
     } catch (_) {
       return 'error'; // fall through to citizen login
@@ -262,6 +315,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state.role == UserRole.citizen ||
         state.role == UserRole.rescuer && _client.auth.currentSession == null) {
       state = const AuthState();
+      await _clearPersistedAuth();
       return;
     }
     await _client.auth.signOut();
