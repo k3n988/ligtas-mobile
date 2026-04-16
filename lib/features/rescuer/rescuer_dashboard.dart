@@ -111,7 +111,7 @@ class RescuerDashboard extends ConsumerWidget {
                     const SizedBox(height: 10),
                     myAsset == null
                         ? _emptyCard('No asset assigned to your account.')
-                        : _AssetCard(asset: myAsset),
+                        : _AssetCard(asset: myAsset, highlightAsMine: true),
                   ],
                 ),
               ),
@@ -313,7 +313,12 @@ class _HouseholdRow extends StatelessWidget {
 
 class _AssetCard extends StatelessWidget {
   final Asset asset;
-  const _AssetCard({required this.asset});
+  final bool highlightAsMine;
+
+  const _AssetCard({
+    required this.asset,
+    this.highlightAsMine = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -329,7 +334,11 @@ class _AssetCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
+        border: Border.all(
+          color: highlightAsMine
+              ? AppColors.accent.withValues(alpha: 0.45)
+              : AppColors.divider,
+        ),
       ),
       child: Row(
         children: [
@@ -339,18 +348,34 @@ class _AssetCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (highlightAsMine)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text(
+                      'Assigned Asset',
+                      style: AppTextStyles.labelSmall.copyWith(
+                        color: AppColors.accent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 Text(
                   asset.name,
                   style: AppTextStyles.bodyMedium.copyWith(
                     color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
                   ),
                 ),
                 if (asset.unit.isNotEmpty)
                   Text(
-                    asset.unit,
+                    '${asset.type} • ${asset.unit}',
                     style: AppTextStyles.labelSmall
-                        .copyWith(color: AppColors.textSecondary),
+                        .copyWith(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                        ),
                   ),
               ],
             ),

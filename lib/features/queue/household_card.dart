@@ -262,26 +262,35 @@ class HouseholdCard extends ConsumerWidget {
                 children: [
                   Expanded(
                     flex: 2,
-                    child: _filledBtn(
-                      label: isAssignedToMe
-                          ? 'EN ROUTE'
-                          : isAssignedElsewhere
-                              ? 'ASSIGNED ELSEWHERE'
+                      child: _filledBtn(
+                        label: isAssignedToMe
+                            ? 'EN ROUTE'
+                            : isAssignedElsewhere
+                                ? 'ASSIGNED ELSEWHERE'
                               : 'RESPOND',
                       color: isAssignedToMe
                           ? AppColors.deployed
                           : isAssignedElsewhere
                               ? AppColors.surface
                               : AppColors.critical,
-                      textColor: isAssignedElsewhere
-                          ? AppColors.textSecondary
-                          : Colors.white,
-                      onTap: isAssignedElsewhere || myAsset == null
-                          ? null
-                          : () => ref
-                              .read(householdProvider.notifier)
-                              .dispatchRescue(h.id, myAsset.id),
-                    ),
+                        textColor: isAssignedElsewhere
+                            ? AppColors.textSecondary
+                            : Colors.white,
+                        onTap: isAssignedElsewhere || myAsset == null
+                            ? null
+                            : () async {
+                                if (!isAssignedToMe) {
+                                  await ref
+                                      .read(householdProvider.notifier)
+                                      .dispatchRescue(h.id, myAsset.id);
+                                }
+                                ref.read(dispatchHouseholdProvider.notifier).state =
+                                    h.id;
+                                if (context.mounted) {
+                                  context.go('/rescuer');
+                                }
+                              },
+                      ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
