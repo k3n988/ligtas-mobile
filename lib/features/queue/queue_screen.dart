@@ -14,31 +14,50 @@ class QueueScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final entries       = ref.watch(filteredQueueEntriesProvider);
-    final cities        = ref.watch(queueCitiesProvider);
-    final barangays     = ref.watch(queueBarangaysProvider);
+    final entries = ref.watch(filteredQueueEntriesProvider);
+    final cities = ref.watch(queueCitiesProvider);
+    final barangays = ref.watch(queueBarangaysProvider);
     final activeHazards = ref.watch(activeHazardsProvider);
-    final hazardTypes   = ref.watch(activeHazardTypesProvider);
-    final isRescuer     = ref.watch(authProvider).role == UserRole.rescuer;
+    final hazardTypes = ref.watch(activeHazardTypesProvider);
+    final isRescuer = ref.watch(authProvider).role == UserRole.rescuer;
 
-    final cityFilter    = ref.watch(queueCityFilterProvider);
-    final brgyFilter    = ref.watch(queueBarangayFilterProvider);
-    final levelFilter   = ref.watch(queueLevelFilterProvider);
-    final rescuerView   = ref.watch(queueRescuerViewProvider);
+    final cityFilter = ref.watch(queueCityFilterProvider);
+    final brgyFilter = ref.watch(queueBarangayFilterProvider);
+    final levelFilter = ref.watch(queueLevelFilterProvider);
+    final hazardFilter = ref.watch(queueHazardFilterProvider);
+    final rescuerView = ref.watch(queueRescuerViewProvider);
 
-    final pending        = entries.where((e) => !e.household.isRescued).toList();
-    final rescued        = entries.where((e) =>  e.household.isRescued).toList();
-    final hazardPending  = pending.where((e) => e.isInHazardZone).toList();
+    final pending = entries.where((e) => !e.household.isRescued).toList();
+    final rescued = entries.where((e) => e.household.isRescued).toList();
+    final hazardPending = pending.where((e) => e.isInHazardZone).toList();
     final regularPending = pending.where((e) => !e.isInHazardZone).toList();
 
-    final hasHazards      = activeHazards.isNotEmpty;
+    final hasHazards = activeHazards.isNotEmpty;
     final showHazardBanner = hasHazards && hazardPending.isNotEmpty;
-    final assignedCount   = pending.where((e) => e.assignedToCurrentRescuer).length;
-    final nearestCount    = pending.where((e) => e.rescuerDistanceKm != null).length;
-    final hazardLabel     = activeHazards.map((h) => h.type).join(', ');
+    final assignedCount =
+        pending.where((e) => e.assignedToCurrentRescuer).length;
+    final nearestCount = pending.where((e) => e.rescuerDistanceKm != null).length;
+    final hazardLabel = activeHazards.map((h) => h.type).join(', ');
 
-    final hasFilter = cityFilter != null || brgyFilter != null ||
-        levelFilter != null;
+    final hasFilter = cityFilter != null ||
+        brgyFilter != null ||
+        levelFilter != null ||
+        hazardFilter != null ||
+        (isRescuer && rescuerView != RescuerView.priority);
+
+    final queueLabel = hasFilter
+        ? [
+            if (isRescuer && rescuerView != RescuerView.priority)
+              rescuerView == RescuerView.assigned
+                  ? 'Assigned To Me'
+                  : 'Nearest To Me',
+            if (cityFilter != null) cityFilter,
+            if (brgyFilter != null) brgyFilter,
+            if (levelFilter != null)
+              '${levelFilter.label[0]}${levelFilter.label.substring(1).toLowerCase()}',
+            if (hazardFilter != null) hazardFilter,
+          ].join(' · ')
+        : 'ACTIVE QUEUE';
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -46,7 +65,6 @@ class QueueScreen extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header ────────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
               child: Row(
@@ -69,20 +87,24 @@ class QueueScreen extends ConsumerWidget {
                   if (hasFilter)
                     GestureDetector(
                       onTap: () {
-                        ref.read(queueCityFilterProvider.notifier).state     = null;
-                        ref.read(queueBarangayFilterProvider.notifier).state = null;
-                        ref.read(queueLevelFilterProvider.notifier).state    = null;
-                        ref.read(queueHazardFilterProvider.notifier).state   = null;
-                        ref.read(queueRescuerViewProvider.notifier).state    = RescuerView.priority;
+                        ref.read(queueCityFilterProvider.notifier).state = null;
+                        ref.read(queueBarangayFilterProvider.notifier).state =
+                            null;
+                        ref.read(queueLevelFilterProvider.notifier).state = null;
+                        ref.read(queueHazardFilterProvider.notifier).state =
+                            null;
+                        ref.read(queueRescuerViewProvider.notifier).state =
+                            RescuerView.priority;
                       },
-                      child: Icon(Icons.close,
-                          size: 18, color: AppColors.textSecondary),
+                      child: Icon(
+                        Icons.close,
+                        size: 18,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                 ],
               ),
             ),
-
-            // ── Rescuer view toggle ───────────────────────────────────────
             if (isRescuer) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -122,8 +144,6 @@ class QueueScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 10),
             ],
-
-            // ── Three dropdowns: City · Barangay · Priority ───────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
@@ -135,8 +155,9 @@ class QueueScreen extends ConsumerWidget {
                       items: cities,
                       itemLabel: (v) => v,
                       onChanged: (v) {
-                        ref.read(queueCityFilterProvider.notifier).state     = v;
-                        ref.read(queueBarangayFilterProvider.notifier).state = null;
+                        ref.read(queueCityFilterProvider.notifier).state = v;
+                        ref.read(queueBarangayFilterProvider.notifier).state =
+                            null;
                       },
                     ),
                   ),
@@ -148,12 +169,12 @@ class QueueScreen extends ConsumerWidget {
                       items: barangays,
                       itemLabel: (v) => v,
                       enabled: cityFilter != null,
-                      onChanged: (v) =>
-                          ref.read(queueBarangayFilterProvider.notifier).state = v,
+                      onChanged: (v) => ref
+                          .read(queueBarangayFilterProvider.notifier)
+                          .state = v,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Hazard type dropdown for admin; priority dropdown for rescuer
                   if (!isRescuer && hazardTypes.isNotEmpty)
                     Expanded(
                       child: _HazardDropdown(
@@ -169,24 +190,21 @@ class QueueScreen extends ConsumerWidget {
                         items: TriageLevel.values,
                         itemLabel: (l) =>
                             '${l.label[0]}${l.label.substring(1).toLowerCase()}',
-                        onChanged: (v) =>
-                            ref.read(queueLevelFilterProvider.notifier).state = v,
+                        onChanged: (v) => ref
+                            .read(queueLevelFilterProvider.notifier)
+                            .state = v,
                       ),
                     ),
                 ],
               ),
             ),
             const SizedBox(height: 14),
-
-            // ── "ACTIVE QUEUE" row ────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
                   Text(
-                    hasFilter
-                        ? '${cityFilter ?? 'All Cities'}${brgyFilter != null ? ' · $brgyFilter' : ''}'
-                        : 'ACTIVE QUEUE',
+                    queueLabel,
                     style: AppTextStyles.bodyMedium.copyWith(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -206,15 +224,12 @@ class QueueScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 10),
-
-            // ── List ───────────────────────────────────────────────────────
             Expanded(
               child: entries.isEmpty
                   ? _EmptyState(hasFilter: hasFilter)
                   : ListView(
                       padding: const EdgeInsets.only(bottom: 24),
                       children: [
-                        // Hazard priority banner
                         if (showHazardBanner)
                           _HazardBanner(
                             hazardLabel: hazardLabel,
@@ -223,33 +238,29 @@ class QueueScreen extends ConsumerWidget {
                             nearestCount: nearestCount,
                             isRescuer: isRescuer,
                           ),
-
-                        // Inside hazard zone section
                         if (showHazardBanner) ...[
-                          _SectionLabel(
+                          const _SectionLabel(
                             label: 'INSIDE ACTIVE HAZARD LAYER',
-                            color: const Color(0xFFFF4D4D),
+                            color: Color(0xFFFF4D4D),
                           ),
                           ..._priorityGroups(hazardPending),
                         ],
-
-                        // Outside hazard zone
                         if (showHazardBanner && regularPending.isNotEmpty) ...[
-                          _DividerRow(label: 'Outside Active Hazard Layer'),
+                          const _DividerRow(label: 'Outside Active Hazard Layer'),
                           ..._priorityGroups(regularPending),
                         ] else if (!showHazardBanner)
                           ..._priorityGroups(pending),
-
-                        // Completed operations
                         if (rescued.isNotEmpty) ...[
-                          _DividerRow(label: 'Completed Operations'),
-                          ...rescued.map((e) => HouseholdCard(
-                                household: e.household,
-                                queuePosition: 0,
-                                isInHazardZone: e.isInHazardZone,
-                                matchingHazardTypes: e.matchingHazardTypes,
-                                effectiveLevel: e.effectiveLevel,
-                              )),
+                          const _DividerRow(label: 'Completed Operations'),
+                          ...rescued.map(
+                            (e) => HouseholdCard(
+                              household: e.household,
+                              queuePosition: 0,
+                              isInHazardZone: e.isInHazardZone,
+                              matchingHazardTypes: e.matchingHazardTypes,
+                              effectiveLevel: e.effectiveLevel,
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -268,20 +279,20 @@ class QueueScreen extends ConsumerWidget {
       result.add(_PriorityGroupHeader(level: level));
       var pos = 1;
       for (final e in group) {
-        result.add(HouseholdCard(
-          household: e.household,
-          queuePosition: e.household.isRescued ? 0 : pos++,
-          isInHazardZone: e.isInHazardZone,
-          matchingHazardTypes: e.matchingHazardTypes,
-          effectiveLevel: e.effectiveLevel,
-        ));
+        result.add(
+          HouseholdCard(
+            household: e.household,
+            queuePosition: e.household.isRescued ? 0 : pos++,
+            isInHazardZone: e.isInHazardZone,
+            matchingHazardTypes: e.matchingHazardTypes,
+            effectiveLevel: e.effectiveLevel,
+          ),
+        );
       }
     }
     return result;
   }
 }
-
-// ── Hazard priority banner ─────────────────────────────────────────────────────
 
 class _HazardBanner extends StatelessWidget {
   final String hazardLabel;
@@ -307,7 +318,8 @@ class _HazardBanner extends StatelessWidget {
         color: const Color(0xFF200A0A),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-            color: const Color(0xFFFF4D4D).withValues(alpha: 0.6)),
+          color: const Color(0xFFFF4D4D).withValues(alpha: 0.6),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,11 +353,10 @@ class _HazardBanner extends StatelessWidget {
   }
 }
 
-// ── Section label ──────────────────────────────────────────────────────────────
-
 class _SectionLabel extends StatelessWidget {
   final String label;
   final Color color;
+
   const _SectionLabel({required this.label, required this.color});
 
   @override
@@ -365,10 +376,9 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-// ── Priority group header ──────────────────────────────────────────────────────
-
 class _PriorityGroupHeader extends StatelessWidget {
   final TriageLevel level;
+
   const _PriorityGroupHeader({required this.level});
 
   @override
@@ -389,7 +399,10 @@ class _PriorityGroupHeader extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Container(height: 1, color: AppColors.divider.withValues(alpha: 0.5)),
+            child: Container(
+              height: 1,
+              color: AppColors.divider.withValues(alpha: 0.5),
+            ),
           ),
         ],
       ),
@@ -397,10 +410,9 @@ class _PriorityGroupHeader extends StatelessWidget {
   }
 }
 
-// ── Divider row ───────────────────────────────────────────────────────────────
-
 class _DividerRow extends StatelessWidget {
   final String label;
+
   const _DividerRow({required this.label});
 
   @override
@@ -425,8 +437,6 @@ class _DividerRow extends StatelessWidget {
     );
   }
 }
-
-// ── Generic dropdown ──────────────────────────────────────────────────────────
 
 class _Dropdown<T> extends StatelessWidget {
   final String hint;
@@ -457,36 +467,44 @@ class _Dropdown<T> extends StatelessWidget {
       ),
       child: DropdownButton<T>(
         value: value,
-        hint: Text(hint,
-            style: const TextStyle(
-                fontSize: 11, color: Color(0xFF6B7785)),
-            overflow: TextOverflow.ellipsis),
+        hint: Text(
+          hint,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
+          overflow: TextOverflow.ellipsis,
+        ),
         isExpanded: true,
         underline: const SizedBox(),
         dropdownColor: AppColors.cardBackground,
-        icon: const Icon(Icons.expand_more,
-            size: 16, color: Color(0xFF6B7785)),
+        icon: const Icon(
+          Icons.expand_more,
+          size: 16,
+          color: Color(0xFF6B7785),
+        ),
         items: [
           DropdownMenuItem<T>(
             value: null,
-            child: Text(hint,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
-                overflow: TextOverflow.ellipsis),
+            child: Text(
+              hint,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          ...items.map((i) => DropdownMenuItem<T>(
-                value: i,
-                child: Text(itemLabel(i),
-                    style: const TextStyle(fontSize: 11),
-                    overflow: TextOverflow.ellipsis),
-              )),
+          ...items.map(
+            (i) => DropdownMenuItem<T>(
+              value: i,
+              child: Text(
+                itemLabel(i),
+                style: const TextStyle(fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
         ],
         onChanged: enabled ? onChanged : null,
       ),
     );
   }
 }
-
-// ── Hazard type dropdown (admin) ───────────────────────────────────────────────
 
 class _HazardDropdown extends StatelessWidget {
   final List<String> hazardTypes;
@@ -515,23 +533,32 @@ class _HazardDropdown extends StatelessWidget {
         isExpanded: true,
         underline: const SizedBox(),
         dropdownColor: AppColors.cardBackground,
-        icon: const Icon(Icons.expand_more,
-            size: 16, color: Color(0xFF6B7785)),
+        icon: const Icon(
+          Icons.expand_more,
+          size: 16,
+          color: Color(0xFF6B7785),
+        ),
         items: [
           DropdownMenuItem<String>(
             value: null,
             child: Text(
-              hazardTypes.length > 1 ? 'All Active Disasters' : 'Active Disaster',
+              hazardTypes.length > 1
+                  ? 'All Active Disasters'
+                  : 'Active Disaster',
               style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          ...hazardTypes.map((t) => DropdownMenuItem<String>(
-                value: t,
-                child: Text(t,
-                    style: const TextStyle(fontSize: 11),
-                    overflow: TextOverflow.ellipsis),
-              )),
+          ...hazardTypes.map(
+            (t) => DropdownMenuItem<String>(
+              value: t,
+              child: Text(
+                t,
+                style: const TextStyle(fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
         ],
         onChanged: (v) =>
             ref.read(queueHazardFilterProvider.notifier).state = v,
@@ -540,15 +567,16 @@ class _HazardDropdown extends StatelessWidget {
   }
 }
 
-// ── Rescuer view button ────────────────────────────────────────────────────────
-
 class _ViewBtn extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
 
-  const _ViewBtn(
-      {required this.label, required this.selected, required this.onTap});
+  const _ViewBtn({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -561,7 +589,8 @@ class _ViewBtn extends StatelessWidget {
           color: selected ? AppColors.accent : AppColors.cardBackground,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-              color: selected ? AppColors.accent : AppColors.divider),
+            color: selected ? AppColors.accent : AppColors.divider,
+          ),
         ),
         alignment: Alignment.center,
         child: Text(
@@ -578,10 +607,9 @@ class _ViewBtn extends StatelessWidget {
   }
 }
 
-// ── Empty state ────────────────────────────────────────────────────────────────
-
 class _EmptyState extends StatelessWidget {
   final bool hasFilter;
+
   const _EmptyState({required this.hasFilter});
 
   @override
@@ -590,9 +618,11 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.search,
-              size: 48,
-              color: AppColors.textSecondary.withValues(alpha: 0.4)),
+          Icon(
+            Icons.search,
+            size: 48,
+            color: AppColors.textSecondary.withValues(alpha: 0.4),
+          ),
           const SizedBox(height: 14),
           Text(
             hasFilter

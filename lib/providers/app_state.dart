@@ -54,26 +54,60 @@ class HouseholdNotifier extends StateNotifier<List<Household>> {
     // Realtime fires _fetch automatically
   }
 
+  Future<String?> _assignedAssetIdFor(String householdId) async {
+    final rows = await _db
+        .from('households')
+        .select('assigned_asset_id')
+        .eq('id', householdId)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    return rows.first['assigned_asset_id'] as String?;
+  }
+
+  Future<void> _setAssetStatus(String assetId, AssetStatus status) async {
+    await _db
+        .from('assets')
+        .update({'status': status.name})
+        .eq('id', assetId);
+  }
+
   Future<void> markRescued(String id) async {
+    final previousAssetId = await _assignedAssetIdFor(id);
     await _db
         .from('households')
-        .update({'status': 'Rescued'})   // web uses capitalized 'Rescued'
+        .update({
+          'status': 'Rescued',   // web uses capitalized 'Rescued'
+          'assigned_asset_id': null,
+          'dispatched_at': null,
+        })
         .eq('id', id);
+    if (previousAssetId != null) {
+      await _setAssetStatus(previousAssetId, AssetStatus.active);
+    }
   }
 
   Future<void> restorePending(String id) async {
+    final previousAssetId = await _assignedAssetIdFor(id);
     await _db.from('households').update({
       'status':            'Pending',    // web uses capitalized 'Pending'
       'assigned_asset_id': null,
       'dispatched_at':     null,
     }).eq('id', id);
+    if (previousAssetId != null) {
+      await _setAssetStatus(previousAssetId, AssetStatus.active);
+    }
   }
 
   Future<void> dispatchRescue(String householdId, String assetId) async {
+    final previousAssetId = await _assignedAssetIdFor(householdId);
+    if (previousAssetId != null && previousAssetId != assetId) {
+      await _setAssetStatus(previousAssetId, AssetStatus.active);
+    }
     await _db.from('households').update({
       'assigned_asset_id': assetId,
       'dispatched_at':    DateTime.now().toIso8601String(),
     }).eq('id', householdId);
+    await _setAssetStatus(assetId, AssetStatus.dispatching);
   }
 
   @override

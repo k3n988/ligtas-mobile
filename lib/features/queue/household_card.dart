@@ -46,6 +46,7 @@ class HouseholdCard extends ConsumerWidget {
         myAsset != null && h.assignedAssetId == myAsset.id;
     final isAssignedElsewhere =
         h.assignedAssetId != null && !isAssignedToMe;
+    final canCompleteRescue = isAssignedToMe;
 
     return Opacity(
       opacity: isRescued ? 0.74 : 1.0,
@@ -216,10 +217,6 @@ class HouseholdCard extends ConsumerWidget {
                                 ref
                                     .read(householdProvider.notifier)
                                     .dispatchRescue(h.id, myAsset.id);
-                                ref
-                                    .read(assetProvider.notifier)
-                                    .updateStatus(
-                                        myAsset.id, AssetStatus.dispatching);
                               },
                       ),
                     ),
@@ -239,10 +236,14 @@ class HouseholdCard extends ConsumerWidget {
                     Expanded(
                       child: _outlineBtn(
                         label: 'COMPLETE RESCUE',
-                        color: AppColors.stable,
-                        onTap: () => ref
-                            .read(householdProvider.notifier)
-                            .markRescued(h.id),
+                        color: canCompleteRescue
+                            ? AppColors.stable
+                            : AppColors.textSecondary,
+                        onTap: canCompleteRescue
+                            ? () => ref
+                                .read(householdProvider.notifier)
+                                .markRescued(h.id)
+                            : null,
                       ),
                     ),
                   ],
@@ -324,7 +325,7 @@ class HouseholdCard extends ConsumerWidget {
   Widget _outlineBtn({
     required String label,
     required Color color,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -339,7 +340,7 @@ class HouseholdCard extends ConsumerWidget {
         child: Text(
           label,
           style: AppTextStyles.labelLarge.copyWith(
-            color: color,
+            color: onTap == null ? AppColors.textSecondary : color,
             fontSize: 10,
             fontWeight: FontWeight.w700,
           ),
@@ -404,9 +405,6 @@ class HouseholdCard extends ConsumerWidget {
                       ref
                           .read(householdProvider.notifier)
                           .dispatchRescue(h.id, a.id);
-                      ref
-                          .read(assetProvider.notifier)
-                          .updateStatus(a.id, AssetStatus.dispatching);
                       Navigator.pop(ctx);
                     },
                   )),

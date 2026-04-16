@@ -232,7 +232,12 @@ final queueBarangaysProvider = Provider<List<String>>((ref) {
 /// Active hazard types present in the data (for the hazard filter dropdown)
 final activeHazardTypesProvider = Provider<List<String>>((ref) {
   final hazards = ref.watch(activeHazardsProvider);
-  return hazards.map((h) => h.type).toSet().toList()..sort();
+  return hazards
+      .where((h) => h.type != 'Flood')
+      .map((h) => h.type)
+      .toSet()
+      .toList()
+    ..sort();
 });
 
 /// Back-compat: plain household list (used by any code that still imports filteredQueueProvider)
