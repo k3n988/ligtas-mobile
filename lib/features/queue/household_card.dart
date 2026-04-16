@@ -6,7 +6,6 @@ import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../core/widgets/triage_badge.dart';
 import '../../features/auth/auth_provider.dart';
 import '../../providers/app_state.dart';
 
@@ -26,266 +25,303 @@ class HouseholdCard extends ConsumerWidget {
     this.effectiveLevel,
   });
 
-  Color get _accentColor => (effectiveLevel ?? household.triageLevel).color;
+  TriageLevel get _level => effectiveLevel ?? household.triageLevel;
+  Color get _accentColor => _level.color;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final h = household;
-    final assets = ref.watch(assetProvider);
+    final h       = household;
+    final assets  = ref.watch(assetProvider);
     final isRescued = h.isRescued;
+    final isRescuer = ref.watch(authProvider).role == UserRole.rescuer;
+
+    final assignedAsset = h.assignedAssetId != null
+        ? assets.cast<Asset?>().firstWhere(
+            (a) => a?.id == h.assignedAssetId,
+            orElse: () => null)
+        : null;
+
+    final myAsset = ref.watch(myAssetProvider);
+    final isAssignedToMe =
+        myAsset != null && h.assignedAssetId == myAsset.id;
+    final isAssignedElsewhere =
+        h.assignedAssetId != null && !isAssignedToMe;
 
     return Opacity(
-      opacity: isRescued ? 0.6 : 1.0,
+      opacity: isRescued ? 0.74 : 1.0,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         decoration: BoxDecoration(
           color: AppColors.cardBackground,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: _accentColor.withValues(alpha: isRescued ? 0.2 : 0.4)),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(
+              color: isRescued ? AppColors.stable : _accentColor,
+              width: 4,
+            ),
+            top:    BorderSide(color: AppColors.divider),
+            right:  BorderSide(color: AppColors.divider),
+            bottom: BorderSide(color: AppColors.divider),
+          ),
         ),
-        child: Column(
-          children: [
-            // ── Header ──────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-              child: Row(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Name + triage badge ──────────────────────────────────
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: _accentColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      isRescued ? '✓' : '#$queuePosition',
-                      style: AppTextStyles.labelLarge
-                          .copyWith(color: _accentColor, fontSize: 11),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(h.head, style: AppTextStyles.titleMedium),
-                        Text('${h.barangay}, ${h.city}',
-                            style: AppTextStyles.bodyMedium),
-                      ],
+                    child: Text(
+                      h.head,
+                      style: AppTextStyles.titleMedium
+                          .copyWith(fontSize: 15, fontWeight: FontWeight.w600),
                     ),
                   ),
-                  if (isInHazardZone) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF4D4D).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                            color: const Color(0xFFFF4D4D)
-                                .withValues(alpha: 0.5)),
-                      ),
-                      child: Text(
-                        matchingHazardTypes.isNotEmpty
-                            ? '⚠ ${matchingHazardTypes.join(', ')}'
-                            : '⚠ Hazard Zone',
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFFF4D4D),
-                          letterSpacing: 0.4,
-                        ),
-                      ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isRescued ? 'RESCUED' : _level.label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isRescued ? AppColors.stable : _accentColor,
+                      letterSpacing: 0.8,
                     ),
-                    const SizedBox(width: 6),
-                  ],
-                  TriageBadge(level: effectiveLevel ?? h.triageLevel),
+                  ),
                 ],
               ),
-            ),
+              const SizedBox(height: 4),
 
-            // ── Details ─────────────────────────────────────────────────
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: AppColors.divider))),
-              child: Row(
-                children: [
-                  _stat(Icons.group, '${h.occupants}', 'occupants'),
-                  if (h.purok.isNotEmpty) ...[
-                    const SizedBox(width: 14),
-                    _stat(Icons.place, h.purok, ''),
-                  ],
-                  const Spacer(),
-                  if (h.vulnerabilities.isNotEmpty)
-                    Flexible(
-                      child: Wrap(
-                        spacing: 4,
-                        children: h.vulnerabilities
-                            .map((v) => Tooltip(
-                                  message: v.label,
-                                  child: Icon(v.icon,
-                                      size: 14,
-                                      color: v.triggersLevel.color),
-                                ))
-                            .toList(),
-                      ),
-                    ),
-                ],
+              // ── Address ──────────────────────────────────────────────
+              Text(
+                '${h.street.isNotEmpty ? '${h.street}, ' : ''}'
+                'Brgy. ${h.barangay}, ${h.city}'
+                ' - ${h.occupants} occupant${h.occupants != 1 ? 's' : ''}',
+                style: AppTextStyles.bodyMedium.copyWith(fontSize: 12),
               ),
-            ),
 
-            // ── Dispatch indicator ───────────────────────────────────────
-            if (h.isDispatched)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: const BoxDecoration(
-                    border:
-                        Border(top: BorderSide(color: AppColors.divider))),
-                child: Row(
-                  children: [
-                    const Icon(Icons.send, size: 14, color: AppColors.deployed),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Dispatched: ${_assetName(assets, h.assignedAssetId)}',
-                      style: AppTextStyles.bodyMedium
-                          .copyWith(color: AppColors.deployed),
-                    ),
-                    const Spacer(),
-                    Text(_timeAgo(h.dispatchedAt!),
-                        style: AppTextStyles.labelSmall),
-                  ],
+              // ── Source ────────────────────────────────────────────────
+              if (h.source != null && h.source!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Source: ${_sourceLabel(h.source!)}',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                      fontSize: 11, color: AppColors.accent),
                 ),
-              ),
+              ],
 
-            // ── Actions ─────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
-              child: Builder(builder: (context) {
-                final isRescuer =
-                    ref.watch(authProvider).role == UserRole.rescuer;
-                return Row(
-                  children: [
-                    Text(_timeAgo(h.registeredAt),
-                        style: AppTextStyles.labelSmall),
-                    const Spacer(),
-                    if (isRescuer) ...[
-                      if (!isRescued) ...[
-                        // Locate — pan map to household
-                        _actionBtn(
-                          icon: Icons.location_on_outlined,
-                          label: 'Locate',
-                          color: AppColors.accent,
-                          onTap: () {
-                            ref.read(locateHouseholdProvider.notifier).state = h.id;
-                            context.go('/rescuer');
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        // Dispatch — auto-assign to rescuer's own asset → map + GPS route
-                        _actionBtn(
-                          icon: Icons.send_outlined,
-                          label: h.isDispatched ? 'En Route' : 'Dispatch',
+              // ── Vulnerability tags ───────────────────────────────────
+              if (h.vulnerabilities.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: h.vulnerabilities
+                      .map((v) => Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: AppColors.divider),
+                            ),
+                            child: Text(v.label,
+                                style: AppTextStyles.labelSmall
+                                    .copyWith(fontSize: 10)),
+                          ))
+                      .toList(),
+                ),
+              ],
+
+              // ── Dispatched asset row ─────────────────────────────────
+              if (assignedAsset != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppColors.divider),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '${assignedAsset.icon} ${assignedAsset.name} - dispatched',
+                        style: AppTextStyles.bodyMedium.copyWith(
                           color: AppColors.deployed,
-                          onTap: () {
-                            final myAsset = ref.read(myAssetProvider);
-                            if (myAsset != null) {
-                              ref.read(householdProvider.notifier)
-                                  .dispatchRescue(h.id, myAsset.id);
-                              ref.read(assetProvider.notifier)
-                                  .updateStatus(myAsset.id, AssetStatus.dispatching);
-                              ref.read(dispatchHouseholdProvider.notifier).state = h.id;
-                              context.go('/rescuer');
-                            } else {
-                              // No linked asset — fall back to picker
-                              _showDispatchSheet(context, ref, h, assets,
-                                  navigateTo: '/rescuer');
-                            }
-                          },
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
                         ),
-                        const SizedBox(width: 8),
-                        // Mark Rescued — available directly from queue too
-                        _actionBtn(
-                          icon: Icons.check_circle_outline,
-                          label: 'Mark Rescued',
-                          color: AppColors.stable,
-                          onTap: () => ref
-                              .read(householdProvider.notifier)
-                              .markRescued(h.id),
-                        ),
-                      ],
-                    ] else ...[
-                      // Admin/LGU
-                      if (!isRescued) ...[
-                        _actionBtn(
-                          icon: Icons.location_on_outlined,
-                          label: 'Locate',
-                          color: AppColors.accent,
-                          onTap: () {
-                            ref
-                                .read(locateHouseholdProvider.notifier)
-                                .state = h.id;
-                            context.go('/');
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        _actionBtn(
-                          icon: Icons.send_outlined,
-                          label: h.isDispatched ? 'Reassign' : 'Dispatch',
-                          color: AppColors.deployed,
-                          onTap: () =>
-                              _showDispatchSheet(context, ref, h, assets),
-                        ),
-                        const SizedBox(width: 8),
-                        _actionBtn(
-                          icon: Icons.check_circle_outline,
-                          label: 'Mark Rescued',
-                          color: AppColors.stable,
-                          onTap: () => ref
-                              .read(householdProvider.notifier)
-                              .markRescued(h.id),
-                        ),
-                      ] else
-                        _actionBtn(
-                          icon: Icons.undo,
-                          label: 'Restore',
-                          color: AppColors.textSecondary,
-                          onTap: () => ref
-                              .read(householdProvider.notifier)
-                              .restorePending(h.id),
+                      ),
+                      const Spacer(),
+                      if (!isRescuer)
+                        GestureDetector(
+                          onTap: () => _showDispatchSheet(
+                              context, ref, h, assets),
+                          child: Text('Reassign',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                  fontSize: 11,
+                                  color: AppColors.textSecondary)),
                         ),
                     ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 12),
+
+              // ── Action buttons ───────────────────────────────────────
+              if (isRescued)
+                Row(
+                  children: [
+                    Text('Operation Complete',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                            color: AppColors.stable,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    _outlineBtn(
+                      label: 'Restore',
+                      color: AppColors.textSecondary,
+                      onTap: () => ref
+                          .read(householdProvider.notifier)
+                          .restorePending(h.id),
+                    ),
                   ],
-                );
-              }),
-            ),
-          ],
+                )
+              else if (isRescuer)
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: _filledBtn(
+                        label: isAssignedToMe
+                            ? 'EN ROUTE'
+                            : isAssignedElsewhere
+                                ? 'ASSIGNED ELSEWHERE'
+                                : 'RESPOND',
+                        color: isAssignedToMe
+                            ? AppColors.deployed
+                            : isAssignedElsewhere
+                                ? AppColors.surface
+                                : AppColors.critical,
+                        textColor: isAssignedElsewhere
+                            ? AppColors.textSecondary
+                            : Colors.white,
+                        onTap: isAssignedElsewhere || myAsset == null
+                            ? null
+                            : () {
+                                ref
+                                    .read(householdProvider.notifier)
+                                    .dispatchRescue(h.id, myAsset.id);
+                                ref
+                                    .read(assetProvider.notifier)
+                                    .updateStatus(
+                                        myAsset.id, AssetStatus.dispatching);
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _outlineBtn(
+                        label: 'LOCATE',
+                        color: AppColors.accent,
+                        onTap: () {
+                          ref.read(locateHouseholdProvider.notifier).state =
+                              h.id;
+                          context.go('/rescuer');
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _outlineBtn(
+                        label: 'COMPLETE RESCUE',
+                        color: AppColors.stable,
+                        onTap: () => ref
+                            .read(householdProvider.notifier)
+                            .markRescued(h.id),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                // Admin / LGU
+                Row(
+                  children: [
+                    Expanded(
+                      child: _outlineBtn(
+                        label: 'LOCATE',
+                        color: AppColors.accent,
+                        onTap: () {
+                          ref.read(locateHouseholdProvider.notifier).state =
+                              h.id;
+                          context.go('/');
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _filledBtn(
+                        label: assignedAsset != null
+                            ? 'REASSIGN'
+                            : 'DISPATCH RESCUE',
+                        color: AppColors.critical,
+                        textColor: Colors.white,
+                        onTap: () =>
+                            _showDispatchSheet(context, ref, h, assets),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _outlineBtn(
+                        label: 'MARK RESCUED',
+                        color: AppColors.stable,
+                        onTap: () => ref
+                            .read(householdProvider.notifier)
+                            .markRescued(h.id),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _stat(IconData icon, String value, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: AppColors.textSecondary),
-        const SizedBox(width: 3),
-        Text(value, style: AppTextStyles.bodyMedium),
-        if (label.isNotEmpty) ...[
-          const SizedBox(width: 2),
-          Text(label, style: AppTextStyles.bodyMedium),
-        ],
-      ],
+  Widget _filledBtn({
+    required String label,
+    required Color color,
+    required Color textColor,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: onTap == null ? AppColors.surface : color,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: AppTextStyles.labelLarge.copyWith(
+            color: onTap == null ? AppColors.textSecondary : textColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
     );
   }
 
-  Widget _actionBtn({
-    required IconData icon,
+  Widget _outlineBtn({
     required String label,
     required Color color,
     required VoidCallback onTap,
@@ -293,49 +329,40 @@ class HouseholdCard extends ConsumerWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 9),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: color),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
-            Text(label,
-                style: AppTextStyles.labelLarge
-                    .copyWith(color: color, fontSize: 10)),
-          ],
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: AppTextStyles.labelLarge.copyWith(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+          textAlign: TextAlign.center,
         ),
       ),
     );
   }
 
-  String _assetName(List<Asset> assets, String? id) {
-    if (id == null) return '—';
-    try {
-      return assets.firstWhere((a) => a.id == id).name;
-    } catch (_) {
-      return id;
+  String _sourceLabel(String source) {
+    switch (source.toLowerCase()) {
+      case 'lgu':    return 'BHW Field Survey';
+      case 'citizen': return 'Citizen Self-Report';
+      default:       return source;
     }
-  }
-
-  String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    return '${diff.inHours}h ago';
   }
 
   void _showDispatchSheet(
     BuildContext context,
     WidgetRef ref,
     Household h,
-    List<Asset> assets, {
-    String? navigateTo,
-  }) {
+    List<Asset> assets,
+  ) {
     final available =
         assets.where((a) => a.isAvailable || a.id == h.assignedAssetId).toList();
 
@@ -362,16 +389,13 @@ class HouseholdCard extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Assign Rescue Asset',
-                style: AppTextStyles.headlineMedium),
-            Text('Household: ${h.head}',
-                style: AppTextStyles.bodyMedium),
+            Text('Assign Rescue Asset', style: AppTextStyles.headlineMedium),
+            Text('Household: ${h.head}', style: AppTextStyles.bodyMedium),
             const SizedBox(height: 16),
             if (available.isEmpty)
               Center(
-                child: Text('No available assets',
-                    style: AppTextStyles.bodyMedium),
-              )
+                  child: Text('No available assets',
+                      style: AppTextStyles.bodyMedium))
             else
               ...available.map((a) => _AssetTile(
                     asset: a,
@@ -384,10 +408,6 @@ class HouseholdCard extends ConsumerWidget {
                           .read(assetProvider.notifier)
                           .updateStatus(a.id, AssetStatus.dispatching);
                       Navigator.pop(ctx);
-                      if (navigateTo != null) {
-                        ref.read(dispatchHouseholdProvider.notifier).state = h.id;
-                        context.go(navigateTo);
-                      }
                     },
                   )),
           ],
@@ -397,15 +417,15 @@ class HouseholdCard extends ConsumerWidget {
   }
 }
 
+// ── Asset tile (bottom sheet) ─────────────────────────────────────────────────
+
 class _AssetTile extends StatelessWidget {
   final Asset asset;
   final bool isAssigned;
   final VoidCallback onSelect;
 
   const _AssetTile(
-      {required this.asset,
-      required this.isAssigned,
-      required this.onSelect});
+      {required this.asset, required this.isAssigned, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -420,8 +440,7 @@ class _AssetTile extends StatelessWidget {
               : AppColors.cardBackground,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isAssigned ? AppColors.deployed : AppColors.divider,
-          ),
+              color: isAssigned ? AppColors.deployed : AppColors.divider),
         ),
         child: Row(
           children: [
@@ -460,12 +479,9 @@ class _AssetTile extends StatelessWidget {
 
   Color _statusColor(AssetStatus s) {
     switch (s) {
-      case AssetStatus.active:
-        return AppColors.available;
-      case AssetStatus.dispatching:
-        return AppColors.deployed;
-      case AssetStatus.standby:
-        return AppColors.maintenance;
+      case AssetStatus.active:      return AppColors.available;
+      case AssetStatus.dispatching: return AppColors.deployed;
+      case AssetStatus.standby:     return AppColors.maintenance;
     }
   }
 }

@@ -14,33 +14,31 @@ class QueueScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final entries        = ref.watch(filteredQueueEntriesProvider);
-    final cities         = ref.watch(queueCitiesProvider);
-    final barangays      = ref.watch(queueBarangaysProvider);
-    final activeHazards  = ref.watch(activeHazardsProvider);
-    final hazardTypes    = ref.watch(activeHazardTypesProvider);
-    final isRescuer      = ref.watch(authProvider).role == UserRole.rescuer;
+    final entries       = ref.watch(filteredQueueEntriesProvider);
+    final cities        = ref.watch(queueCitiesProvider);
+    final barangays     = ref.watch(queueBarangaysProvider);
+    final activeHazards = ref.watch(activeHazardsProvider);
+    final hazardTypes   = ref.watch(activeHazardTypesProvider);
+    final isRescuer     = ref.watch(authProvider).role == UserRole.rescuer;
 
-    final cityFilter     = ref.watch(queueCityFilterProvider);
-    final barangayFilter = ref.watch(queueBarangayFilterProvider);
-    final levelFilter    = ref.watch(queueLevelFilterProvider);
-    final hazardFilter   = ref.watch(queueHazardFilterProvider);
-    final rescuerView    = ref.watch(queueRescuerViewProvider);
+    final cityFilter    = ref.watch(queueCityFilterProvider);
+    final brgyFilter    = ref.watch(queueBarangayFilterProvider);
+    final levelFilter   = ref.watch(queueLevelFilterProvider);
+    final rescuerView   = ref.watch(queueRescuerViewProvider);
 
-    final pending         = entries.where((e) => !e.household.isRescued).toList();
-    final rescued         = entries.where((e) =>  e.household.isRescued).toList();
-    final hazardPending   = pending.where((e) => e.isInHazardZone).toList();
-    final regularPending  = pending.where((e) => !e.isInHazardZone).toList();
+    final pending        = entries.where((e) => !e.household.isRescued).toList();
+    final rescued        = entries.where((e) =>  e.household.isRescued).toList();
+    final hazardPending  = pending.where((e) => e.isInHazardZone).toList();
+    final regularPending = pending.where((e) => !e.isInHazardZone).toList();
 
-    final hasHazards       = activeHazards.isNotEmpty;
+    final hasHazards      = activeHazards.isNotEmpty;
     final showHazardBanner = hasHazards && hazardPending.isNotEmpty;
-    final assignedCount    = pending.where((e) => e.assignedToCurrentRescuer).length;
+    final assignedCount   = pending.where((e) => e.assignedToCurrentRescuer).length;
+    final nearestCount    = pending.where((e) => e.rescuerDistanceKm != null).length;
+    final hazardLabel     = activeHazards.map((h) => h.type).join(', ');
 
-    final hasFilter = cityFilter != null || barangayFilter != null ||
-        levelFilter != null || hazardFilter != null;
-
-    final hazardLabel = hazardFilter ??
-        activeHazards.map((h) => h.type).join(', ');
+    final hasFilter = cityFilter != null || brgyFilter != null ||
+        levelFilter != null;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -50,70 +48,74 @@ class QueueScreen extends ConsumerWidget {
           children: [
             // ── Header ────────────────────────────────────────────────────
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
               child: Row(
                 children: [
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Rescue Queue', style: AppTextStyles.headlineLarge),
                       Text(
-                        hasFilter
-                            ? '${cityFilter ?? 'All Cities'}${barangayFilter != null ? ' · $barangayFilter' : ''}'
-                            : '${pending.length} pending',
-                        style: AppTextStyles.bodyMedium,
+                        'FILTER',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                          letterSpacing: 1.0,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
                   const Spacer(),
                   if (hasFilter)
-                    TextButton.icon(
-                      onPressed: () {
+                    GestureDetector(
+                      onTap: () {
                         ref.read(queueCityFilterProvider.notifier).state     = null;
                         ref.read(queueBarangayFilterProvider.notifier).state = null;
                         ref.read(queueLevelFilterProvider.notifier).state    = null;
                         ref.read(queueHazardFilterProvider.notifier).state   = null;
                         ref.read(queueRescuerViewProvider.notifier).state    = RescuerView.priority;
                       },
-                      icon: const Icon(Icons.filter_alt_off,
-                          size: 16, color: AppColors.textSecondary),
-                      label: Text('Clear',
-                          style: AppTextStyles.bodyMedium
-                              .copyWith(color: AppColors.textSecondary)),
+                      child: Icon(Icons.close,
+                          size: 18, color: AppColors.textSecondary),
                     ),
                 ],
               ),
             ),
 
-            // ── Rescuer view toggle (rescuers only) ───────────────────────
+            // ── Rescuer view toggle ───────────────────────────────────────
             if (isRescuer) ...[
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
+              Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
                   children: [
-                    _ViewChip(
-                      label: 'Priority Missions',
-                      selected: rescuerView == RescuerView.priority,
-                      color: AppColors.accent,
-                      onTap: () => ref.read(queueRescuerViewProvider.notifier).state =
-                          RescuerView.priority,
+                    Expanded(
+                      child: _ViewBtn(
+                        label: 'Priority Missions',
+                        selected: rescuerView == RescuerView.priority,
+                        onTap: () => ref
+                            .read(queueRescuerViewProvider.notifier)
+                            .state = RescuerView.priority,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    _ViewChip(
-                      label: 'Assigned To Me${assignedCount > 0 ? ' ($assignedCount)' : ''}',
-                      selected: rescuerView == RescuerView.assigned,
-                      color: AppColors.deployed,
-                      onTap: () => ref.read(queueRescuerViewProvider.notifier).state =
-                          RescuerView.assigned,
+                    Expanded(
+                      child: _ViewBtn(
+                        label: 'Assigned To Me',
+                        selected: rescuerView == RescuerView.assigned,
+                        onTap: () => ref
+                            .read(queueRescuerViewProvider.notifier)
+                            .state = RescuerView.assigned,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    _ViewChip(
-                      label: 'Nearest To Me',
-                      selected: rescuerView == RescuerView.nearest,
-                      color: AppColors.stable,
-                      onTap: () => ref.read(queueRescuerViewProvider.notifier).state =
-                          RescuerView.nearest,
+                    Expanded(
+                      child: _ViewBtn(
+                        label: 'Nearest To Me',
+                        selected: rescuerView == RescuerView.nearest,
+                        onTap: () => ref
+                            .read(queueRescuerViewProvider.notifier)
+                            .state = RescuerView.nearest,
+                      ),
                     ),
                   ],
                 ),
@@ -121,16 +123,17 @@ class QueueScreen extends ConsumerWidget {
               const SizedBox(height: 10),
             ],
 
-            // ── Filters ────────────────────────────────────────────────────
+            // ── Three dropdowns: City · Barangay · Priority ───────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
                   Expanded(
-                    child: _FilterDropdown(
-                      hint: 'All Cities',
+                    child: _Dropdown<String>(
+                      hint: 'All Cities / Municipalities',
                       value: cityFilter,
                       items: cities,
+                      itemLabel: (v) => v,
                       onChanged: (v) {
                         ref.read(queueCityFilterProvider.notifier).state     = v;
                         ref.read(queueBarangayFilterProvider.notifier).state = null;
@@ -139,65 +142,70 @@ class QueueScreen extends ConsumerWidget {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _FilterDropdown(
+                    child: _Dropdown<String>(
                       hint: 'All Barangays',
-                      value: barangayFilter,
+                      value: brgyFilter,
                       items: barangays,
+                      itemLabel: (v) => v,
                       enabled: cityFilter != null,
                       onChanged: (v) =>
                           ref.read(queueBarangayFilterProvider.notifier).state = v,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  // Hazard type dropdown for admin; priority dropdown for rescuer
+                  if (!isRescuer && hazardTypes.isNotEmpty)
+                    Expanded(
+                      child: _HazardDropdown(
+                        hazardTypes: hazardTypes,
+                        ref: ref,
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: _Dropdown<TriageLevel>(
+                        hint: 'All Priorities',
+                        value: levelFilter,
+                        items: TriageLevel.values,
+                        itemLabel: (l) =>
+                            '${l.label[0]}${l.label.substring(1).toLowerCase()}',
+                        onChanged: (v) =>
+                            ref.read(queueLevelFilterProvider.notifier).state = v,
+                      ),
+                    ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 14),
 
-            // ── Triage level + hazard filter chips ─────────────────────────
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            // ── "ACTIVE QUEUE" row ────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  _LevelChip(
-                    label: 'All',
-                    selected: levelFilter == null,
-                    color: AppColors.accent,
-                    onTap: () =>
-                        ref.read(queueLevelFilterProvider.notifier).state = null,
+                  Text(
+                    hasFilter
+                        ? '${cityFilter ?? 'All Cities'}${brgyFilter != null ? ' · $brgyFilter' : ''}'
+                        : 'ACTIVE QUEUE',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
                   ),
-                  ...TriageLevel.values.map((l) => Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: _LevelChip(
-                          label: l.label,
-                          selected: levelFilter == l,
-                          color: l.color,
-                          onTap: () => ref
-                              .read(queueLevelFilterProvider.notifier)
-                              .state = levelFilter == l ? null : l,
-                        ),
-                      )),
-                  // Hazard filter chips (admin/LGU only, when hazards active)
-                  if (!isRescuer && hazardTypes.isNotEmpty) ...[
-                    const SizedBox(width: 12),
-                    Container(width: 1, height: 18, color: AppColors.divider),
-                    const SizedBox(width: 12),
-                    ...hazardTypes.map((type) => Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: _LevelChip(
-                            label: type,
-                            selected: hazardFilter == type,
-                            color: const Color(0xFFFF4D4D),
-                            onTap: () => ref
-                                .read(queueHazardFilterProvider.notifier)
-                                .state = hazardFilter == type ? null : type,
-                          ),
-                        )),
-                  ],
+                  const Spacer(),
+                  Text(
+                    '${pending.length} pending',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFFFF4D4D),
+                    ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
 
             // ── List ───────────────────────────────────────────────────────
             Expanded(
@@ -208,32 +216,33 @@ class QueueScreen extends ConsumerWidget {
                       children: [
                         // Hazard priority banner
                         if (showHazardBanner)
-                          _HazardPriorityBanner(
+                          _HazardBanner(
                             hazardLabel: hazardLabel,
                             hazardCount: hazardPending.length,
                             assignedCount: assignedCount,
+                            nearestCount: nearestCount,
                             isRescuer: isRescuer,
                           ),
 
-                        // Hazard zone section
+                        // Inside hazard zone section
                         if (showHazardBanner) ...[
-                          _SectionHeader(
-                            label: 'Inside Active Hazard Layer',
+                          _SectionLabel(
+                            label: 'INSIDE ACTIVE HAZARD LAYER',
                             color: const Color(0xFFFF4D4D),
                           ),
-                          ..._priorityGroups(hazardPending, ref),
+                          ..._priorityGroups(hazardPending),
                         ],
 
-                        // Outside hazard zone (or all if no hazards)
+                        // Outside hazard zone
                         if (showHazardBanner && regularPending.isNotEmpty) ...[
-                          _Divider(label: 'Outside Active Hazard Layer'),
-                          ..._priorityGroups(regularPending, ref),
+                          _DividerRow(label: 'Outside Active Hazard Layer'),
+                          ..._priorityGroups(regularPending),
                         ] else if (!showHazardBanner)
-                          ..._priorityGroups(pending, ref),
+                          ..._priorityGroups(pending),
 
-                        // Rescued section
+                        // Completed operations
                         if (rescued.isNotEmpty) ...[
-                          _Divider(label: 'Completed Operations'),
+                          _DividerRow(label: 'Completed Operations'),
                           ...rescued.map((e) => HouseholdCard(
                                 household: e.household,
                                 queuePosition: 0,
@@ -251,12 +260,11 @@ class QueueScreen extends ConsumerWidget {
     );
   }
 
-  List<Widget> _priorityGroups(List<QueueEntry> entries, WidgetRef ref) {
+  List<Widget> _priorityGroups(List<QueueEntry> entries) {
     final result = <Widget>[];
     for (final level in TriageLevel.values) {
       final group = entries.where((e) => e.effectiveLevel == level).toList();
       if (group.isEmpty) continue;
-
       result.add(_PriorityGroupHeader(level: level));
       var pos = 1;
       for (final e in group) {
@@ -275,16 +283,18 @@ class QueueScreen extends ConsumerWidget {
 
 // ── Hazard priority banner ─────────────────────────────────────────────────────
 
-class _HazardPriorityBanner extends StatelessWidget {
+class _HazardBanner extends StatelessWidget {
   final String hazardLabel;
   final int hazardCount;
   final int assignedCount;
+  final int nearestCount;
   final bool isRescuer;
 
-  const _HazardPriorityBanner({
+  const _HazardBanner({
     required this.hazardLabel,
     required this.hazardCount,
     required this.assignedCount,
+    required this.nearestCount,
     required this.isRescuer,
   });
 
@@ -295,29 +305,35 @@ class _HazardPriorityBanner extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
         color: const Color(0xFF200A0A),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFF4D4D).withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: const Color(0xFFFF4D4D).withValues(alpha: 0.6)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             isRescuer
-                ? 'Priority Missions In Active Hazard Zones'
-                : '$hazardLabel Hazard Priority Active',
+                ? 'PRIORITY MISSIONS IN ACTIVE HAZARD ZONES'
+                : '${hazardLabel.toUpperCase()} HAZARD PRIORITY ACTIVE',
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w800,
               color: Color(0xFFFF4D4D),
-              letterSpacing: 0.8,
+              letterSpacing: 0.6,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 5),
           Text(
             isRescuer
-                ? '$hazardCount priority mission${hazardCount != 1 ? 's' : ''} are inside active hazard layers. Assigned: $assignedCount.'
-                : '$hazardCount household${hazardCount != 1 ? 's' : ''} inside the active hazard layer are pinned to the top of the queue.',
-            style: AppTextStyles.bodyMedium.copyWith(fontSize: 12),
+                ? '$hazardCount priority mission${hazardCount != 1 ? 's' : ''} are inside active hazard layers.'
+                    ' Assigned: $assignedCount. Nearest available: $nearestCount.'
+                : '$hazardCount household${hazardCount != 1 ? 's' : ''} inside the active hazard layer'
+                    ' are pinned to the top of the queue.',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFFADB5BD),
+            ),
           ),
         ],
       ),
@@ -325,20 +341,19 @@ class _HazardPriorityBanner extends StatelessWidget {
   }
 }
 
-// ── Section header ─────────────────────────────────────────────────────────────
+// ── Section label ──────────────────────────────────────────────────────────────
 
-class _SectionHeader extends StatelessWidget {
+class _SectionLabel extends StatelessWidget {
   final String label;
   final Color color;
-
-  const _SectionHeader({required this.label, required this.color});
+  const _SectionLabel({required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Text(
-        label.toUpperCase(),
+        label,
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w800,
@@ -359,11 +374,12 @@ class _PriorityGroupHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
       child: Row(
         children: [
           Text(
-            '${level.label[0]}${level.label.substring(1).toLowerCase()} Priority',
+            '${level.label[0]}${level.label.substring(1).toLowerCase()} Priority'
+                .toUpperCase(),
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w800,
@@ -371,19 +387,21 @@ class _PriorityGroupHeader extends StatelessWidget {
               letterSpacing: 1.2,
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(child: Container(height: 1, color: AppColors.divider)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(height: 1, color: AppColors.divider.withValues(alpha: 0.5)),
+          ),
         ],
       ),
     );
   }
 }
 
-// ── Divider with label ─────────────────────────────────────────────────────────
+// ── Divider row ───────────────────────────────────────────────────────────────
 
-class _Divider extends StatelessWidget {
+class _DividerRow extends StatelessWidget {
   final String label;
-  const _Divider({required this.label});
+  const _DividerRow({required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -393,33 +411,36 @@ class _Divider extends StatelessWidget {
         children: [
           Text(
             label.toUpperCase(),
-            style: AppTextStyles.labelSmall.copyWith(
-              color: AppColors.textSecondary,
-              letterSpacing: 1.5,
+            style: const TextStyle(
+              fontSize: 10,
               fontWeight: FontWeight.w700,
+              color: Color(0xFF6B7785),
+              letterSpacing: 1.5,
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(child: Container(height: 1, color: AppColors.divider)),
+          const Expanded(child: Divider(height: 1)),
         ],
       ),
     );
   }
 }
 
-// ── Filter dropdown ────────────────────────────────────────────────────────────
+// ── Generic dropdown ──────────────────────────────────────────────────────────
 
-class _FilterDropdown extends StatelessWidget {
+class _Dropdown<T> extends StatelessWidget {
   final String hint;
-  final String? value;
-  final List<String> items;
-  final void Function(String?) onChanged;
+  final T? value;
+  final List<T> items;
+  final String Function(T) itemLabel;
+  final void Function(T?) onChanged;
   final bool enabled;
 
-  const _FilterDropdown({
+  const _Dropdown({
     required this.hint,
     required this.value,
     required this.items,
+    required this.itemLabel,
     required this.onChanged,
     this.enabled = true,
   });
@@ -427,33 +448,35 @@ class _FilterDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: AppColors.divider),
       ),
-      child: DropdownButton<String>(
+      child: DropdownButton<T>(
         value: value,
         hint: Text(hint,
-            style: AppTextStyles.bodyMedium.copyWith(fontSize: 12),
+            style: const TextStyle(
+                fontSize: 11, color: Color(0xFF6B7785)),
             overflow: TextOverflow.ellipsis),
         isExpanded: true,
         underline: const SizedBox(),
         dropdownColor: AppColors.cardBackground,
-        style: AppTextStyles.bodyMedium,
         icon: const Icon(Icons.expand_more,
-            size: 18, color: AppColors.textSecondary),
+            size: 16, color: Color(0xFF6B7785)),
         items: [
-          DropdownMenuItem(
+          DropdownMenuItem<T>(
             value: null,
             child: Text(hint,
-                style: AppTextStyles.bodyMedium.copyWith(fontSize: 12)),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
+                overflow: TextOverflow.ellipsis),
           ),
-          ...items.map((i) => DropdownMenuItem(
+          ...items.map((i) => DropdownMenuItem<T>(
                 value: i,
-                child: Text(i,
-                    style: AppTextStyles.bodyMedium.copyWith(fontSize: 12),
+                child: Text(itemLabel(i),
+                    style: const TextStyle(fontSize: 11),
                     overflow: TextOverflow.ellipsis),
               )),
         ],
@@ -463,20 +486,69 @@ class _FilterDropdown extends StatelessWidget {
   }
 }
 
-// ── View chip (rescuer mode selector) ─────────────────────────────────────────
+// ── Hazard type dropdown (admin) ───────────────────────────────────────────────
 
-class _ViewChip extends StatelessWidget {
+class _HazardDropdown extends StatelessWidget {
+  final List<String> hazardTypes;
+  final WidgetRef ref;
+
+  const _HazardDropdown({required this.hazardTypes, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final hazardFilter = ref.watch(queueHazardFilterProvider);
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: DropdownButton<String>(
+        value: hazardFilter,
+        hint: Text(
+          hazardTypes.length > 1 ? 'All Active Disasters' : 'Active Disaster',
+          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
+          overflow: TextOverflow.ellipsis,
+        ),
+        isExpanded: true,
+        underline: const SizedBox(),
+        dropdownColor: AppColors.cardBackground,
+        icon: const Icon(Icons.expand_more,
+            size: 16, color: Color(0xFF6B7785)),
+        items: [
+          DropdownMenuItem<String>(
+            value: null,
+            child: Text(
+              hazardTypes.length > 1 ? 'All Active Disasters' : 'Active Disaster',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7785)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          ...hazardTypes.map((t) => DropdownMenuItem<String>(
+                value: t,
+                child: Text(t,
+                    style: const TextStyle(fontSize: 11),
+                    overflow: TextOverflow.ellipsis),
+              )),
+        ],
+        onChanged: (v) =>
+            ref.read(queueHazardFilterProvider.notifier).state = v,
+      ),
+    );
+  }
+}
+
+// ── Rescuer view button ────────────────────────────────────────────────────────
+
+class _ViewBtn extends StatelessWidget {
   final String label;
   final bool selected;
-  final Color color;
   final VoidCallback onTap;
 
-  const _ViewChip({
-    required this.label,
-    required this.selected,
-    required this.color,
-    required this.onTap,
-  });
+  const _ViewBtn(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -484,60 +556,22 @@ class _ViewChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 9),
         decoration: BoxDecoration(
-          color: selected ? color : AppColors.cardBackground,
+          color: selected ? AppColors.accent : AppColors.cardBackground,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: selected ? color : AppColors.divider),
+          border: Border.all(
+              color: selected ? AppColors.accent : AppColors.divider),
         ),
+        alignment: Alignment.center,
         child: Text(
           label,
-          style: AppTextStyles.labelLarge.copyWith(
-            color: selected ? Colors.white : AppColors.textSecondary,
+          style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : const Color(0xFF6B7785),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Triage level chip ──────────────────────────────────────────────────────────
-
-class _LevelChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _LevelChip({
-    required this.label,
-    required this.selected,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected
-              ? color.withValues(alpha: 0.2)
-              : AppColors.cardBackground,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? color : AppColors.divider),
-        ),
-        child: Text(
-          label,
-          style: AppTextStyles.labelLarge.copyWith(
-            color: selected ? color : AppColors.textSecondary,
-            fontSize: 11,
-          ),
+          textAlign: TextAlign.center,
         ),
       ),
     );
@@ -557,14 +591,18 @@ class _EmptyState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.search,
-              size: 48, color: AppColors.textSecondary.withValues(alpha: 0.5)),
+              size: 48,
+              color: AppColors.textSecondary.withValues(alpha: 0.4)),
           const SizedBox(height: 14),
           Text(
             hasFilter
                 ? 'No reports match this filter.'
                 : 'All households rescued!',
-            style:
-                AppTextStyles.titleLarge.copyWith(color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
