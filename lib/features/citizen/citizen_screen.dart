@@ -15,6 +15,8 @@ import '../auth/auth_provider.dart';
 import '../map/legend_widget.dart';
 import '../map/marker_icons.dart';
 import '../map/marker_layer.dart';
+// ── NEW: mesh imports ────────────────────────────────────────────────────────
+import '../../core/services/mesh_service.dart';
 
 final _db = Supabase.instance.client;
 
@@ -39,16 +41,59 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
   String?          _prevRescueStatus;
   String?          _prevAssignedAssetId;
 
+  // ── NEW: mesh state ────────────────────────────────────────────────────────
+  StreamSubscription<MeshStatus>? _meshStatusSub;
+  bool _meshBroadcasting = false; // shows the offline relay banner
+
   @override
   void initState() {
     super.initState();
     _fetchMyHousehold();
+    _initMesh();
   }
 
   @override
   void dispose() {
     _channel?.unsubscribe();
+    _meshStatusSub?.cancel();
     super.dispose();
+  }
+
+  // ── NEW: Mesh initialisation ───────────────────────────────────────────────
+
+  Future<void> _initMesh() async {
+    final mesh = ref.read(meshServiceProvider);
+    await mesh.init();
+
+    // Listen for mesh status changes to update the UI banner.
+    _meshStatusSub = mesh.statusStream.listen((status) {
+      if (!mounted) return;
+      setState(() {
+        _meshBroadcasting = status == MeshStatus.broadcasting ||
+            status == MeshStatus.flushing;
+      });
+
+      if (status == MeshStatus.delivered) {
+        _showStatusNotification(
+          icon:  Icons.cell_tower,
+          color: const Color(0xFF2E7D32),
+          title: 'Status Relayed Successfully',
+          body:  'Your update reached the rescue dashboard via nearby device.',
+        );
+        // Refresh local household once the Supabase row is updated.
+        setState(() => _loading = true);
+        _fetchMyHousehold();
+      }
+
+      if (status == MeshStatus.error) {
+        _showStatusNotification(
+          icon:  Icons.warning_amber_rounded,
+          color: const Color(0xFFF59E0B),
+          title: 'Relay Pending',
+          body:  'Retrying via nearby devices. Your request is saved.',
+        );
+      }
+    });
   }
 
   // ── Data ───────────────────────────────────────────────────────────────────
@@ -80,7 +125,7 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
   // ── Realtime subscription ──────────────────────────────────────────────────
 
   void _subscribeRealtime(String householdId) {
-    if (_channel != null) return; // already subscribed
+    if (_channel != null) return;
     _prevApprovalStatus  = _myHousehold?.approvalStatus;
     _prevRescueStatus    = _myHousehold?.status.name;
     _prevAssignedAssetId = _myHousehold?.assignedAssetId;
@@ -108,7 +153,6 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
     final newRescue   = (record['status'] as String? ?? '').toLowerCase();
     final newAsset    = record['assigned_asset_id'] as String?;
 
-    // "Your request is queued."
     if (_prevApprovalStatus != 'approved' && newApproval == 'approved') {
       _showStatusNotification(
         icon:  Icons.check_circle,
@@ -117,8 +161,6 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         body:  'Your request is now queued for rescue operations.',
       );
     }
-
-    // "Responders are on the way."
     if (_prevAssignedAssetId == null && newAsset != null) {
       _showStatusNotification(
         icon:  Icons.directions_run,
@@ -127,8 +169,6 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         body:  'A rescue team has been dispatched to your location.',
       );
     }
-
-    // "Marked as Rescued."
     if (_prevRescueStatus != 'rescued' && newRescue == 'rescued') {
       _showStatusNotification(
         icon:  Icons.favorite,
@@ -137,8 +177,6 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         body:  'You have been marked as rescued. Stay safe!',
       );
     }
-
-    // Also notify when registration is rejected
     if (_prevApprovalStatus != 'rejected' && newApproval == 'rejected') {
       _showStatusNotification(
         icon:  Icons.cancel,
@@ -152,7 +190,6 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
     _prevRescueStatus    = newRescue;
     _prevAssignedAssetId = newAsset;
 
-    // Refresh local state
     setState(() => _loading = true);
     _fetchMyHousehold();
   }
@@ -211,9 +248,11 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         title: const Text('I Am Safe',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
         content: const Text(
-          'This will mark you as rescued and remove your household from the active rescue queue.\n\n'
+          'This will mark you as rescued and remove your household from the '
+          'active rescue queue.\n\n'
           'Only confirm if you have already evacuated independently.',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+          style: TextStyle(
+              color: AppColors.textSecondary, fontSize: 13, height: 1.5),
         ),
         actions: [
           TextButton(
@@ -223,7 +262,8 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2E7D32)),
+            style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32)),
             child: const Text('Yes, I Am Safe'),
           ),
         ],
@@ -232,28 +272,54 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
     if (confirmed == true) await _markAsSafe();
   }
 
+  /// ── UPDATED: "I AM SAFE" with offline mesh fallback ───────────────────────
   Future<void> _markAsSafe() async {
     if (_myHousehold == null) return;
     final messenger = ScaffoldMessenger.of(context);
-    try {
-      await _db.from('households').update({
-        'status':            'Rescued',
-        'assigned_asset_id': null,
-        'dispatched_at':     null,
-      }).eq('id', _myHousehold!.id);
-      if (mounted) {
-        setState(() => _loading = true);
-        await _fetchMyHousehold();
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Marked as safe. Removed from rescue queue.'),
-            backgroundColor: Color(0xFF2E7D32),
-          ),
-        );
+    final mesh      = ref.read(meshServiceProvider);
+
+    if (mesh.isOnline) {
+      // ── Online path (unchanged) ──────────────────────────────────────────
+      try {
+        await _db.from('households').update({
+          'status':            'Rescued',
+          'assigned_asset_id': null,
+          'dispatched_at':     null,
+        }).eq('id', _myHousehold!.id);
+        if (mounted) {
+          setState(() => _loading = true);
+          await _fetchMyHousehold();
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text('Marked as safe. Removed from rescue queue.'),
+              backgroundColor: Color(0xFF2E7D32),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
       }
-    } catch (e) {
+    } else {
+      // ── Offline path: enqueue to mesh ─────────────────────────────────────
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+            timeLimit: const Duration(seconds: 3));
+      } catch (_) {}
+
+      await mesh.enqueueIAmSafe(
+        householdId:       _myHousehold!.id,
+        originatorContact: ref.read(authProvider).username ?? '',
+        lat:               pos?.latitude,
+        lng:               pos?.longitude,
+      );
+
       if (mounted) {
-        messenger.showSnackBar(SnackBar(content: Text('Error: $e')));
+        _showOfflineRelayBanner(
+          'Offline — relaying "I Am Safe" via nearby devices…',
+        );
       }
     }
   }
@@ -267,9 +333,10 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         title: const Text('Cancel Rescue Request',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
         content: const Text(
-          'This will cancel the current rescue dispatch and return your record to the pending queue. '
-          'You can request again later.',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+          'This will cancel the current rescue dispatch and return your record '
+          'to the pending queue. You can request again later.',
+          style: TextStyle(
+              color: AppColors.textSecondary, fontSize: 13, height: 1.5),
         ),
         actions: [
           TextButton(
@@ -279,7 +346,8 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF85149)),
+            style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFF85149)),
             child: const Text('Cancel Request'),
           ),
         ],
@@ -310,6 +378,75 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
     }
   }
 
+  /// ── NEW: "RE-SUBMIT" with offline mesh fallback ──────────────────────────
+  Future<void> _resubmitWithMeshFallback() async {
+    final mesh = ref.read(meshServiceProvider);
+
+    if (mesh.isOnline) {
+      // Online: show the re-registration form as before.
+      setState(() => _showForm = true);
+    } else {
+      // Offline: enqueue a resubmit packet to reach the admin dashboard.
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+            timeLimit: const Duration(seconds: 3));
+      } catch (_) {}
+
+      await mesh.enqueueResubmit(
+        householdId:       _myHousehold!.id,
+        originatorContact: ref.read(authProvider).username ?? '',
+        lat:               pos?.latitude,
+        lng:               pos?.longitude,
+      );
+
+      if (mounted) {
+        _showOfflineRelayBanner(
+          'Offline — re-submit request queued and relaying via nearby devices…',
+        );
+      }
+    }
+  }
+
+  /// Shows a persistent bottom sheet explaining the offline relay state.
+  void _showOfflineRelayBanner(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior:        SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF1C2A1E),
+        duration:        const Duration(seconds: 8),
+        margin:          const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: Color(0xFF2E7D32), width: 1),
+        ),
+        content: Row(
+          children: [
+            const _PulsingDot(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Mesh Relay Active',
+                      style: TextStyle(
+                          color: Color(0xFF4ADE80),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                  const SizedBox(height: 2),
+                  Text(message,
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -322,6 +459,8 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
         child: Column(
           children: [
             _buildHeader(username),
+            // ── NEW: offline mesh status banner ──────────────────────────
+            if (_meshBroadcasting) const _MeshStatusBanner(),
             Expanded(
               child: IndexedStack(
                 index: _tabIndex,
@@ -372,7 +511,8 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
     }
     return _HouseholdStatusView(
       household:       _myHousehold!,
-      onResubmit:      () => setState(() => _showForm = true),
+      // ── UPDATED: pass the mesh-aware resubmit handler ─────────────────
+      onResubmit:      _resubmitWithMeshFallback,
       onMarkSafe:      _confirmMarkSafe,
       onCancelRequest: _confirmCancelRequest,
     );
@@ -423,13 +563,89 @@ class _CitizenScreenState extends ConsumerState<CitizenScreen> {
               GestureDetector(
                 onTap: () => ref.read(authProvider.notifier).logout(),
                 child: Text('Log out',
-                    style: TextStyle(
-                        color: AppColors.accent,
-                        fontSize: 11)),
+                    style: TextStyle(color: AppColors.accent, fontSize: 11)),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── NEW: Mesh status banner widget ─────────────────────────────────────────────
+
+class _MeshStatusBanner extends StatelessWidget {
+  const _MeshStatusBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width:   double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color:   const Color(0xFF1C2A1E),
+      child: Row(
+        children: [
+          const _PulsingDot(),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Offline — status update relaying via Bluetooth / WiFi mesh',
+              style: TextStyle(
+                  color: Color(0xFF4ADE80),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+          const Icon(Icons.cell_tower,
+              color: Color(0xFF4ADE80), size: 14),
+        ],
+      ),
+    );
+  }
+}
+
+// ── NEW: Animated pulsing dot for mesh activity ────────────────────────────────
+
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double>   _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync:    this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.3, end: 1.0).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _anim,
+      child: Container(
+        width:  8,
+        height: 8,
+        decoration: const BoxDecoration(
+          color: Color(0xFF4ADE80),
+          shape: BoxShape.circle,
+        ),
       ),
     );
   }
@@ -445,8 +661,8 @@ class _CitizenMapTab extends ConsumerStatefulWidget {
 }
 
 class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
-  Set<Marker>  _markers        = {};
-  bool         _iconsPreloaded = false;
+  Set<Marker>     _markers        = {};
+  bool            _iconsPreloaded = false;
   List<Household> _lastHouseholds = [];
   GoogleMapController? _mapController;
   MapType _mapType = MapType.normal;
@@ -474,9 +690,9 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
   void _zoomOut() => _mapController?.animateCamera(CameraUpdate.zoomOut());
   void _resetBearing() => _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(CameraPosition(
-          target: _initial.target,
-          zoom: _initial.zoom,
-          tilt: 0,
+          target:  _initial.target,
+          zoom:    _initial.zoom,
+          tilt:    0,
           bearing: 0,
         )));
   void _toggleMapType() => setState(() => _mapType =
@@ -486,7 +702,8 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
     try {
       final pos = await Geolocator.getCurrentPosition();
       _mapController?.animateCamera(CameraUpdate.newCameraPosition(
-        CameraPosition(target: LatLng(pos.latitude, pos.longitude), zoom: 17),
+        CameraPosition(
+            target: LatLng(pos.latitude, pos.longitude), zoom: 17),
       ));
     } catch (_) {}
   }
@@ -494,11 +711,9 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
   Future<void> _rebuildMarkers(List<Household> households) async {
     final householdMarkers = await buildHouseholdMarkersAsync(
       households: households,
-      onTap: (_) {}, // read-only in citizen view
+      onTap: (_) {},
     );
-    if (mounted) {
-      setState(() => _markers = householdMarkers);
-    }
+    if (mounted) setState(() => _markers = householdMarkers);
   }
 
   @override
@@ -521,30 +736,21 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
           zoomControlsEnabled:     false,
           onMapCreated: (c) => _mapController = c,
         ),
-        // Legend (bottom-left)
-        Positioned(
-          left:   0,
-          bottom: 0,
-          child:  const LegendWidget(),
-        ),
-        // Map controls (right side)
+        Positioned(left: 0, bottom: 0, child: const LegendWidget()),
         Positioned(
           right:  12,
           bottom: 80,
           child:  _CitizenMapControls(
-            onZoomIn:      _zoomIn,
-            onZoomOut:     _zoomOut,
-            onReset:       _resetBearing,
-            onMyLocation:  _goToMyLocation,
-            onToggleMap:   _toggleMapType,
-            isSatellite:   _mapType == MapType.satellite,
+            onZoomIn:    _zoomIn,
+            onZoomOut:   _zoomOut,
+            onReset:     _resetBearing,
+            onMyLocation: _goToMyLocation,
+            onToggleMap: _toggleMapType,
+            isSatellite: _mapType == MapType.satellite,
           ),
         ),
-        // Asset indicator (top)
         Positioned(
-          top:  12,
-          left: 0,
-          right: 0,
+          top: 12, left: 0, right: 0,
           child: Center(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -559,13 +765,11 @@ class _CitizenMapTabState extends ConsumerState<_CitizenMapTab> {
                   Icon(Icons.directions_car,
                       color: AppColors.accent, size: 14),
                   const SizedBox(width: 6),
-                  Text(
-                    'Risk Map',
-                    style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600),
-                  ),
+                  const Text('Risk Map',
+                      style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
@@ -601,15 +805,13 @@ class _HouseholdStatusView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Approval status banner ───────────────────────────────────────
           _StatusBanner(status: status),
           const SizedBox(height: 16),
 
-          // ── Quick actions ────────────────────────────────────────────────
           if (status == 'approved' && !h.isRescued) ...[
             Row(
               children: [
-                // I AM SAFE
+                // ── I AM SAFE ──────────────────────────────────────────────
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: onMarkSafe,
@@ -619,13 +821,14 @@ class _HouseholdStatusView extends StatelessWidget {
                             fontWeight: FontWeight.w700, fontSize: 13)),
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF2E7D32),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      padding:
+                          const EdgeInsets.symmetric(vertical: 13),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
                 ),
-                // CANCEL REQUEST — only show when dispatched
+                // CANCEL REQUEST — only when dispatched
                 if (h.isDispatched) ...[
                   const SizedBox(width: 8),
                   Expanded(
@@ -640,7 +843,8 @@ class _HouseholdStatusView extends StatelessWidget {
                               fontSize: 13)),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFF85149)),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
                       ),
@@ -662,7 +866,6 @@ class _HouseholdStatusView extends StatelessWidget {
             const SizedBox(height: 16),
           ],
 
-          // ── Household info ───────────────────────────────────────────────
           _InfoCard(
             title: 'YOUR HOUSEHOLD',
             rows: [
@@ -677,7 +880,6 @@ class _HouseholdStatusView extends StatelessWidget {
           ),
           const SizedBox(height: 12),
 
-          // ── Vulnerabilities ──────────────────────────────────────────────
           if (h.vulnerabilities.isNotEmpty) ...[
             _InfoCard(
               title: 'VULNERABILITIES',
@@ -688,7 +890,6 @@ class _HouseholdStatusView extends StatelessWidget {
             const SizedBox(height: 12),
           ],
 
-          // ── Triage level (only visible if approved) ──────────────────────
           if (status == 'approved') ...[
             _InfoCard(
               title: 'TRIAGE LEVEL',
@@ -701,7 +902,6 @@ class _HouseholdStatusView extends StatelessWidget {
             const SizedBox(height: 12),
           ],
 
-          // ── Rescue status ────────────────────────────────────────────────
           if (status == 'approved')
             _InfoCard(
               title: 'RESCUE STATUS',
@@ -717,7 +917,6 @@ class _HouseholdStatusView extends StatelessWidget {
               ],
             ),
 
-          // ── Document ────────────────────────────────────────────────────
           if (h.documentUrl != null) ...[
             const SizedBox(height: 12),
             _InfoCard(
@@ -726,6 +925,7 @@ class _HouseholdStatusView extends StatelessWidget {
             ),
           ],
 
+          // ── RE-SUBMIT — now mesh-aware ─────────────────────────────────
           if (status == 'rejected') ...[
             const SizedBox(height: 16),
             SizedBox(
@@ -734,7 +934,8 @@ class _HouseholdStatusView extends StatelessWidget {
                 onPressed: onResubmit,
                 style: FilledButton.styleFrom(
                     backgroundColor: AppColors.accent,
-                    padding: const EdgeInsets.symmetric(vertical: 14)),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 14)),
                 child: const Text('RE-SUBMIT REGISTRATION',
                     style: TextStyle(fontWeight: FontWeight.w700)),
               ),
@@ -763,21 +964,21 @@ class _StatusBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final config = switch (status) {
       'approved' => (
-          icon: Icons.check_circle,
+          icon:  Icons.check_circle,
           color: const Color(0xFF2E7D32),
           bg:    const Color(0xFF1A3A2A),
           title: 'Registration Approved',
           sub:   'Your household is on the official vulnerability map.',
         ),
       'rejected' => (
-          icon: Icons.cancel,
+          icon:  Icons.cancel,
           color: const Color(0xFFD32F2F),
           bg:    const Color(0xFF3A1A1A),
           title: 'Registration Rejected',
           sub:   'Please re-submit with valid documentation.',
         ),
       _ => (
-          icon: Icons.hourglass_top,
+          icon:  Icons.hourglass_top,
           color: AppColors.accent,
           bg:    AppColors.surface,
           title: 'Pending Approval',
@@ -819,10 +1020,11 @@ class _StatusBanner extends StatelessWidget {
 }
 
 class _InfoCard extends StatelessWidget {
-  final String      title;
+  final String         title;
   final List<_InfoRow> rows;
-  final Color?      accentColor;
-  const _InfoCard({required this.title, required this.rows, this.accentColor});
+  final Color?         accentColor;
+  const _InfoCard(
+      {required this.title, required this.rows, this.accentColor});
 
   @override
   Widget build(BuildContext context) {
@@ -860,7 +1062,8 @@ class _InfoCard extends StatelessWidget {
                     Expanded(
                       child: Text(r.value,
                           style: const TextStyle(
-                              color: AppColors.textPrimary, fontSize: 13)),
+                              color: AppColors.textPrimary,
+                              fontSize: 13)),
                     ),
                   ],
                 ),
@@ -878,10 +1081,11 @@ class _InfoRow {
 }
 
 // ── Registration form ──────────────────────────────────────────────────────────
+// (unchanged from original — mesh only affects the Rescue Status panel)
 
 class _CitizenRegistrationForm extends ConsumerStatefulWidget {
-  final String        contact;
-  final VoidCallback  onSubmitted;
+  final String       contact;
+  final VoidCallback onSubmitted;
   const _CitizenRegistrationForm({
     required this.contact,
     required this.onSubmitted,
@@ -899,8 +1103,8 @@ class _CitizenRegistrationFormState
   final _streetCtrl = TextEditingController();
   final _notesCtrl  = TextEditingController();
   int   _occupants  = 1;
-  String?           _city;
-  String?           _barangay;
+  String?              _city;
+  String?              _barangay;
   final Set<Vulnerability> _vulns = {};
   XFile?  _document;
   bool    _submitting = false;
@@ -927,7 +1131,6 @@ class _CitizenRegistrationFormState
       return;
     }
     setState(() { _submitting = true; _error = null; });
-
     try {
       String? docUrl;
       if (_document != null) {
@@ -937,7 +1140,6 @@ class _CitizenRegistrationFormState
         await _db.storage.from('documents').uploadBinary(path, bytes);
         docUrl = _db.storage.from('documents').getPublicUrl(path);
       }
-
       final id = 'CIT-${const Uuid().v4().substring(0, 8).toUpperCase()}';
       await _db.from('households').insert({
         'id':              id,
@@ -959,13 +1161,9 @@ class _CitizenRegistrationFormState
         'lat':             0.0,
         'lng':             0.0,
       });
-
       if (mounted) widget.onSubmitted();
     } catch (e) {
-      setState(() {
-        _submitting = false;
-        _error      = 'Submission failed. Please try again.';
-      });
+      setState(() { _submitting = false; _error = 'Submission failed. Please try again.'; });
     }
   }
 
@@ -980,13 +1178,13 @@ class _CitizenRegistrationFormState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── One-per-household notice ─────────────────────────────────────
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: const Color(0xFF2D1C0A),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFD4862A).withValues(alpha: 0.5)),
+              border: Border.all(
+                  color: const Color(0xFFD4862A).withValues(alpha: 0.5)),
             ),
             child: const Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1009,8 +1207,6 @@ class _CitizenRegistrationFormState
             ),
           ),
           const SizedBox(height: 12),
-
-          // ── Info banner ──────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -1037,20 +1233,18 @@ class _CitizenRegistrationFormState
             ),
           ),
           const SizedBox(height: 20),
-
           _sectionLabel('PERSONAL & ADDRESS DETAILS'),
           _field('Household Head / Full Name *', _headCtrl),
           const SizedBox(height: 10),
-
           _label('City / Municipality *'),
           _dropdown(
             hint: 'Select City',
             value: _city,
             items: negrosOccidentalCities,
-            onChanged: (v) => setState(() { _city = v; _barangay = null; }),
+            onChanged: (v) =>
+                setState(() { _city = v; _barangay = null; }),
           ),
           const SizedBox(height: 10),
-
           _label('Barangay *'),
           _dropdown(
             hint: 'Select Barangay',
@@ -1061,7 +1255,6 @@ class _CitizenRegistrationFormState
                 : (v) => setState(() => _barangay = v),
           ),
           const SizedBox(height: 10),
-
           Row(children: [
             Expanded(child: _field('Purok / Sitio', _purokCtrl)),
             const SizedBox(width: 10),
@@ -1075,8 +1268,7 @@ class _CitizenRegistrationFormState
                     decoration: _boxDecor(),
                     child: Row(
                       children: [
-                        _iconBtn(Icons.remove,
-                            () => setState(() {
+                        _iconBtn(Icons.remove, () => setState(() {
                               if (_occupants > 1) _occupants--;
                             })),
                         Expanded(
@@ -1098,7 +1290,6 @@ class _CitizenRegistrationFormState
           const SizedBox(height: 10),
           _field('Street / Landmark', _streetCtrl),
           const SizedBox(height: 20),
-
           _sectionLabel('VULNERABILITIES'),
           Wrap(
             spacing: 8,
@@ -1112,36 +1303,40 @@ class _CitizenRegistrationFormState
                   val ? _vulns.add(v) : _vulns.remove(v);
                 }),
                 backgroundColor: AppColors.cardBackground,
-                selectedColor:   AppColors.accent.withValues(alpha: 0.2),
-                checkmarkColor:  AppColors.accent,
+                selectedColor:
+                    AppColors.accent.withValues(alpha: 0.2),
+                checkmarkColor: AppColors.accent,
                 labelStyle: TextStyle(
-                  color: selected ? AppColors.accent : AppColors.textSecondary,
+                  color: selected
+                      ? AppColors.accent
+                      : AppColors.textSecondary,
                   fontSize: 12,
                 ),
                 side: BorderSide(
-                  color: selected ? AppColors.accent : AppColors.divider,
+                  color:
+                      selected ? AppColors.accent : AppColors.divider,
                 ),
               );
             }).toList(),
           ),
           const SizedBox(height: 20),
-
           _sectionLabel('SUPPORTING DOCUMENT'),
-          Text(
-            'Upload a valid Senior/PWD ID or medical certificate.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-          ),
+          Text('Upload a valid Senior/PWD ID or medical certificate.',
+              style: TextStyle(
+                  color: AppColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 8),
           GestureDetector(
             onTap: _pickDocument,
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 color: AppColors.cardBackground,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: _document != null ? AppColors.accent : AppColors.divider,
-                  style: BorderStyle.solid,
+                  color: _document != null
+                      ? AppColors.accent
+                      : AppColors.divider,
                 ),
               ),
               child: Row(
@@ -1173,15 +1368,16 @@ class _CitizenRegistrationFormState
             ),
           ),
           const SizedBox(height: 20),
-
           _sectionLabel('ADDITIONAL NOTES'),
           TextField(
             controller: _notesCtrl,
-            maxLines: 3,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+            maxLines:   3,
+            style: const TextStyle(
+                color: AppColors.textPrimary, fontSize: 13),
             decoration: InputDecoration(
               hintText:  'Any special circumstances...',
-              hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              hintStyle: TextStyle(
+                  color: AppColors.textMuted, fontSize: 13),
               filled:    true,
               fillColor: AppColors.cardBackground,
               border: OutlineInputBorder(
@@ -1194,11 +1390,11 @@ class _CitizenRegistrationFormState
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide:   const BorderSide(color: AppColors.accent),
+                borderSide:
+                    const BorderSide(color: AppColors.accent),
               ),
             ),
           ),
-
           if (_error != null) ...[
             const SizedBox(height: 12),
             Container(
@@ -1206,14 +1402,14 @@ class _CitizenRegistrationFormState
               decoration: BoxDecoration(
                 color: const Color(0xFF2D1217),
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xAAF85149)),
+                border: Border.all(
+                    color: const Color(0xAAF85149)),
               ),
               child: Text(_error!,
                   style: const TextStyle(
                       color: Color(0xFFF85149), fontSize: 12)),
             ),
           ],
-
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
@@ -1221,7 +1417,8 @@ class _CitizenRegistrationFormState
               onPressed: _submitting ? null : _submit,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.accent,
-                padding:         const EdgeInsets.symmetric(vertical: 15),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 15),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8)),
               ),
@@ -1246,8 +1443,6 @@ class _CitizenRegistrationFormState
     );
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
   Widget _sectionLabel(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Text(text,
@@ -1271,48 +1466,57 @@ class _CitizenRegistrationFormState
           _label(hint),
           TextField(
             controller: ctrl,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+            style: const TextStyle(
+                color: AppColors.textPrimary, fontSize: 13),
             decoration: InputDecoration(
               hintText:  hint.replaceAll(' *', ''),
-              hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              hintStyle: TextStyle(
+                  color: AppColors.textMuted, fontSize: 13),
               filled:    true,
               fillColor: AppColors.cardBackground,
               contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12, vertical: 11),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:   BorderSide(color: AppColors.divider)),
+                  borderSide:
+                      BorderSide(color: AppColors.divider)),
               enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:   BorderSide(color: AppColors.divider)),
+                  borderSide:
+                      BorderSide(color: AppColors.divider)),
               focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:   const BorderSide(color: AppColors.accent)),
+                  borderSide: const BorderSide(
+                      color: AppColors.accent)),
             ),
           ),
         ],
       );
 
   Widget _dropdown({
-    required String             hint,
-    required String?            value,
-    required List<String>       items,
+    required String hint,
+    required String? value,
+    required List<String> items,
     required ValueChanged<String?>? onChanged,
   }) =>
       Container(
         decoration: _boxDecor(),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12),
         child: DropdownButton<String>(
-          value:        value,
-          hint:         Text(hint,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-          isExpanded:   true,
-          underline:    const SizedBox.shrink(),
+          value:         value,
+          hint:          Text(hint,
+              style: TextStyle(
+                  color: AppColors.textMuted, fontSize: 13)),
+          isExpanded:    true,
+          underline:     const SizedBox.shrink(),
           dropdownColor: AppColors.cardBackground,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+          style: const TextStyle(
+              color: AppColors.textPrimary, fontSize: 13),
           onChanged: onChanged,
           items: items
-              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+              .map((e) =>
+                  DropdownMenuItem(value: e, child: Text(e)))
               .toList(),
         ),
       );
@@ -1327,13 +1531,15 @@ class _CitizenRegistrationFormState
       GestureDetector(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Icon(icon, color: AppColors.textSecondary, size: 18),
+          padding: const EdgeInsets.symmetric(
+              horizontal: 10, vertical: 8),
+          child: Icon(icon,
+              color: AppColors.textSecondary, size: 18),
         ),
       );
 }
 
-// ── Map controls for citizen map tab ─────────────────────────────────────────
+// ── Map controls ───────────────────────────────────────────────────────────────
 
 class _CitizenMapControls extends StatelessWidget {
   final VoidCallback onZoomIn;
@@ -1341,7 +1547,7 @@ class _CitizenMapControls extends StatelessWidget {
   final VoidCallback onReset;
   final VoidCallback onMyLocation;
   final VoidCallback onToggleMap;
-  final bool isSatellite;
+  final bool         isSatellite;
 
   const _CitizenMapControls({
     required this.onZoomIn,
@@ -1358,7 +1564,9 @@ class _CitizenMapControls extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)],
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 6)
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1371,19 +1579,27 @@ class _CitizenMapControls extends StatelessWidget {
           _divider(),
           _btn(Icons.my_location, onMyLocation),
           _divider(),
-          _btn(isSatellite ? Icons.map_outlined : Icons.satellite_outlined, onToggleMap),
+          _btn(
+            isSatellite
+                ? Icons.map_outlined
+                : Icons.satellite_outlined,
+            onToggleMap,
+          ),
         ],
       ),
     );
   }
 
-  Widget _btn(IconData icon, VoidCallback onTap) => GestureDetector(
+  Widget _btn(IconData icon, VoidCallback onTap) =>
+      GestureDetector(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Icon(icon, size: 20, color: const Color(0xFF1E293B)),
+          child: Icon(icon,
+              size: 20, color: const Color(0xFF1E293B)),
         ),
       );
 
-  Widget _divider() => const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0));
+  Widget _divider() => const Divider(
+      height: 1, thickness: 1, color: Color(0xFFE2E8F0));
 }

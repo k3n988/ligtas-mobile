@@ -27,8 +27,6 @@ const _criticalRed = Color(0xFFDC2626);  // Header bottom border & alerts
 const _accentBlue = Color(0xFF0A67D0);   // Primary buttons (Login, Search)
 const _textPrimary = Color(0xFF1E293B);  // Dark text for headings
 const _textMuted = Color(0xFF64748B);    // Gray text for subtitles
-const _volcanoGradientStart = Color(0xFFFFF0E5); 
-const _volcanoGradientEnd = Color(0xFFFFFBEB);
 
 const _initialCamera = CameraPosition(
   target: LatLng(10.6765, 122.9509),
@@ -452,8 +450,22 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                         delegate: SliverChildListDelegate([
                           _LandingSearchBar(mapController: _mapController),
                           const SizedBox(height: 16),
-                          const _VolcanoAlertCard(),
-                          const SizedBox(height: 16),
+                          _HazardAlertSection(
+                            hazards: activeHazards,
+                            onFocusMap: (h) {
+                              _mapController?.animateCamera(
+                                CameraUpdate.newLatLngZoom(
+                                  LatLng(h.centerLat, h.centerLng), 13,
+                                ),
+                              );
+                              _sheetCtrl.animateTo(
+                                _snapMin,
+                                duration: const Duration(milliseconds: 400),
+                                curve: Curves.easeOut,
+                              );
+                            },
+                          ),
+                          if (activeHazards.isNotEmpty) const SizedBox(height: 16),
                           _SectionCard(
                             title: 'CHECK YOUR AREA',
                             child: Column(
@@ -642,26 +654,241 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   }
 }
 
-// ── Volcano Alert Card ───────────────────────────────────────────────────────
-class _VolcanoAlertCard extends StatelessWidget {
-  const _VolcanoAlertCard();
+// ── Hazard Alert Section ─────────────────────────────────────────────────────
+
+class _HazardTheme {
+  final Color gradientStart;
+  final Color gradientEnd;
+  final Color borderColor;
+  final Color badgeColor;
+  final Color titleColor;
+  final IconData icon;
+
+  const _HazardTheme({
+    required this.gradientStart,
+    required this.gradientEnd,
+    required this.borderColor,
+    required this.badgeColor,
+    required this.titleColor,
+    required this.icon,
+  });
+}
+
+_HazardTheme _hazardTheme(String type) {
+  switch (type.toLowerCase()) {
+    case 'volcano':
+      return const _HazardTheme(
+        gradientStart: Color(0xFFFFF0E5),
+        gradientEnd:   Color(0xFFFFFBEB),
+        borderColor:   Color(0xFFFF9966),
+        badgeColor:    Color(0xFFDC2626),
+        titleColor:    Color(0xFF7C2D12),
+        icon:          Icons.landscape,
+      );
+    case 'flood':
+      return const _HazardTheme(
+        gradientStart: Color(0xFFEFF6FF),
+        gradientEnd:   Color(0xFFF0F9FF),
+        borderColor:   Color(0xFF60A5FA),
+        badgeColor:    Color(0xFF2563EB),
+        titleColor:    Color(0xFF1E3A5F),
+        icon:          Icons.water,
+      );
+    case 'earthquake':
+      return const _HazardTheme(
+        gradientStart: Color(0xFFF8F9FA),
+        gradientEnd:   Color(0xFFF1F5F9),
+        borderColor:   Color(0xFF9CA3AF),
+        badgeColor:    Color(0xFF6B7280),
+        titleColor:    Color(0xFF1F2937),
+        icon:          Icons.blur_on,
+      );
+    case 'typhoon':
+      return const _HazardTheme(
+        gradientStart: Color(0xFFECFDF5),
+        gradientEnd:   Color(0xFFF0FDFA),
+        borderColor:   Color(0xFF34D399),
+        badgeColor:    Color(0xFF059669),
+        titleColor:    Color(0xFF065F46),
+        icon:          Icons.air,
+      );
+    case 'fire':
+      return const _HazardTheme(
+        gradientStart: Color(0xFFFFF5F5),
+        gradientEnd:   Color(0xFFFFF1F2),
+        borderColor:   Color(0xFFFCA5A5),
+        badgeColor:    Color(0xFFDC2626),
+        titleColor:    Color(0xFF7F1D1D),
+        icon:          Icons.local_fire_department,
+      );
+    default:
+      return const _HazardTheme(
+        gradientStart: Color(0xFFF8F9FA),
+        gradientEnd:   Color(0xFFF1F5F9),
+        borderColor:   Color(0xFF9CA3AF),
+        badgeColor:    Color(0xFF6B7280),
+        titleColor:    Color(0xFF1F2937),
+        icon:          Icons.warning_amber,
+      );
+  }
+}
+
+List<String> _hazardActions(String type) {
+  switch (type.toLowerCase()) {
+    case 'volcano':
+      return ['Wear mask outdoors', 'Stay indoors if ashfall increases', 'Prepare for evacuation updates'];
+    case 'flood':
+      return ['Avoid floodways and crossings', 'Move valuables to higher ground', 'Monitor water level updates'];
+    case 'earthquake':
+      return ['Drop, cover, hold on', 'Avoid damaged structures', 'Inspect for gas leaks after shaking'];
+    case 'typhoon':
+      return ['Secure loose outdoor items', 'Stay indoors away from windows', 'Follow DRRMO evacuation orders'];
+    case 'fire':
+      return ['Evacuate via nearest exit', 'Call BFP hotline immediately', 'Do not re-enter until cleared'];
+    default:
+      return ['Stay alert', 'Follow DRRMO advisories', 'Prepare an emergency kit'];
+  }
+}
+
+class _HazardAlertSection extends StatefulWidget {
+  final List<ActiveHazard> hazards;
+  final void Function(ActiveHazard)? onFocusMap;
+
+  const _HazardAlertSection({required this.hazards, this.onFocusMap});
+
+  @override
+  State<_HazardAlertSection> createState() => _HazardAlertSectionState();
+}
+
+class _HazardAlertSectionState extends State<_HazardAlertSection> {
+  String? _expandedId;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.hazards.isNotEmpty) _expandedId = widget.hazards.first.id;
+  }
+
+  @override
+  void didUpdateWidget(_HazardAlertSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_expandedId != null && !widget.hazards.any((h) => h.id == _expandedId)) {
+      _expandedId = widget.hazards.isNotEmpty ? widget.hazards.first.id : null;
+    } else if (_expandedId == null && widget.hazards.isNotEmpty) {
+      _expandedId = widget.hazards.first.id;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.hazards.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSummaryBar(),
+        const SizedBox(height: 10),
+        ...widget.hazards.map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: h.id == _expandedId
+                  ? _buildExpandedCard(h)
+                  : _buildCollapsedStrip(h),
+            )),
+      ],
+    );
+  }
+
+  Widget _buildSummaryBar() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          const Text(
+            'ACTIVE ALERTS:',
+            style: TextStyle(color: _textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.0),
+          ),
+          const SizedBox(width: 8),
+          ...widget.hazards.map((h) {
+            final theme = _hazardTheme(h.type);
+            final isSelected = h.id == _expandedId;
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: GestureDetector(
+                onTap: () => setState(() => _expandedId = h.id),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: isSelected ? theme.badgeColor : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: theme.badgeColor.withValues(alpha: 0.6)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(theme.icon, size: 12, color: isSelected ? Colors.white : theme.badgeColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        h.type.toUpperCase(),
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : theme.badgeColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCollapsedStrip(ActiveHazard h) {
+    final theme = _hazardTheme(h.type);
+    return GestureDetector(
+      onTap: () => setState(() => _expandedId = h.id),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.gradientStart,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: theme.borderColor),
+        ),
+        child: Row(
+          children: [
+            Icon(theme.icon, color: theme.titleColor, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                h.type.toUpperCase(),
+                style: TextStyle(color: theme.titleColor, fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down, color: theme.titleColor, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpandedCard(ActiveHazard h) {
+    final theme   = _hazardTheme(h.type);
+    final actions = _hazardActions(h.type);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [_volcanoGradientStart, _volcanoGradientEnd],
+        gradient: LinearGradient(
+          colors: [theme.gradientStart, theme.gradientEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-        boxShadow: const [
-           BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4)),
-        ]
+        border: Border.all(color: theme.borderColor),
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -676,51 +903,74 @@ class _VolcanoAlertCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: _criticalRed,
+                      color: theme.badgeColor,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Text(
-                      'LIVE VOLCANO ALERT',
-                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                    child: Text(
+                      'LIVE ${h.type.toUpperCase()} ALERT',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'VOLCANO',
-                    style: TextStyle(color: Color(0xFF7C2D12), fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.0),
+                  Text(
+                    h.type.toUpperCase(),
+                    style: TextStyle(color: theme.titleColor, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1.0),
                   ),
                 ],
               ),
-              const Icon(Icons.landscape, color: Color(0xFF7C2D12), size: 36),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(theme.icon, color: theme.titleColor, size: 36),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () => setState(() => _expandedId = null),
+                    child: Icon(Icons.keyboard_arrow_up, color: theme.titleColor, size: 22),
+                  ),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 12),
-          const Text(
-            'A volcano hazard zone is currently being monitored on the map. Review the actions below before continuing.',
-            style: TextStyle(color: _textPrimary, fontSize: 13, height: 1.4),
+          Text(
+            'A ${h.type.toLowerCase()} hazard zone is currently being monitored on the map. Review the actions below before continuing.',
+            style: const TextStyle(color: _textPrimary, fontSize: 13, height: 1.4),
           ),
           const SizedBox(height: 16),
-          _actionPill('Wear mask outdoors'),
-          const SizedBox(height: 8),
-          _actionPill('Stay indoors if ashfall increases'),
-          const SizedBox(height: 8),
-          _actionPill('Prepare for evacuation updates'),
+          ...actions.map((action) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: theme.borderColor.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(
+                    action,
+                    style: TextStyle(color: theme.titleColor, fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              )),
+          if (widget.onFocusMap != null) ...[
+            const SizedBox(height: 4),
+            GestureDetector(
+              onTap: () => widget.onFocusMap?.call(h),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.map_outlined, size: 14, color: theme.titleColor),
+                  const SizedBox(width: 4),
+                  Text(
+                    'View on map',
+                    style: TextStyle(color: theme.titleColor, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
-      ),
-    );
-  }
-
-  Widget _actionPill(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(color: Color(0xFF9A3412), fontSize: 13, fontWeight: FontWeight.bold),
       ),
     );
   }

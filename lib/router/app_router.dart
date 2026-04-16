@@ -20,6 +20,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/landing',
     refreshListenable: authNotifier,
+    // Safely trap 404s and redirect the user back to their home portal
+    errorBuilder: (context, state) {
+      final auth = ref.read(authProvider);
+      return _RedirectScreen(target: _homeForRole(auth.role));
+    },
     redirect: (context, routerState) {
       final auth = ref.read(authProvider);
       final location = routerState.matchedLocation;
@@ -118,11 +123,12 @@ class _AppShell extends ConsumerWidget {
   const _AppShell({required this.child});
 
   int _locationToIndex(BuildContext context) {
-    final loc = GoRouterState.of(context).uri.toString();
+    // Using .path guarantees query parameters don't break the active tab
+    final loc = GoRouterState.of(context).uri.path;
     if (loc == '/register') return 1;
     if (loc == '/triage') return 2;
     if (loc == '/dispatch') return 3;
-    return 0;
+    return 0; // Default to map
   }
 
   @override
@@ -134,10 +140,15 @@ class _AppShell extends ConsumerWidget {
       body: Stack(
         children: [
           child,
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
-            right: 12,
-            child: _UserBadge(username: username, ref: ref, context: context),
+          // SafeArea naturally respects device notches and dynamic islands
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8.0, right: 12.0),
+                child: _UserBadge(username: username, ref: ref, context: context),
+              ),
+            ),
           ),
         ],
       ),
@@ -319,6 +330,36 @@ class _UserBadge extends StatelessWidget {
             const SizedBox(height: 8),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── NEW: Fallback redirect for GoRouter's errorBuilder ──────────────────────
+
+class _RedirectScreen extends StatefulWidget {
+  final String target;
+  const _RedirectScreen({required this.target});
+
+  @override
+  State<_RedirectScreen> createState() => _RedirectScreenState();
+}
+
+class _RedirectScreenState extends State<_RedirectScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.go(widget.target);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: const Center(
+        child: CircularProgressIndicator(color: AppColors.accent),
       ),
     );
   }

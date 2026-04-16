@@ -31,8 +31,10 @@ dependencies:
   # Mapping
   google_maps_flutter: ^2.9.0
 
-  # Mesh / BLE (wire up later, declare now)
+  # Mesh / BLE Fallback
   flutter_blue_plus: ^1.32.12
+  connectivity_plus: ^6.0.5    # ✅ Added for network state detection
+  nearby_connections: ^4.1.0   # ✅ Added for WiFi-Direct/Bluetooth relay
 
   # Secure storage
   flutter_secure_storage: ^9.0.0
@@ -44,10 +46,12 @@ dependencies:
   image_picker: ^1.1.2
 
   # Utilities
+  permission_handler: ^11.3.1  # ✅ Added for runtime permissions
+  shared_preferences: ^2.5.5   # ✅ Persistent mesh packet queue
   freezed_annotation: ^2.4.1
   json_annotation: ^4.9.0
   dartz: ^0.10.1
-  uuid: 4.5.3        # ✅ Added UUID here
+  uuid: 4.5.3        
   crypto: ^3.0.3
   geolocator: ^14.0.2
   url_launcher: ^6.3.0

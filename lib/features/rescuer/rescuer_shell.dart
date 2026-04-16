@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/services/mesh_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../auth/auth_provider.dart';
 
@@ -17,6 +18,12 @@ class RescuerShell extends ConsumerStatefulWidget {
 }
 
 class _RescuerShellState extends ConsumerState<RescuerShell> {
+  @override
+  void initState() {
+    super.initState();
+    ref.read(meshServiceProvider).init();
+  }
+
   int _locationToIndex(BuildContext context) {
     final loc = GoRouterState.of(context).uri.toString();
     if (loc.startsWith('/rescuer/dashboard')) return 0;
@@ -26,25 +33,18 @@ class _RescuerShellState extends ConsumerState<RescuerShell> {
 
   @override
   Widget build(BuildContext context) {
-    final idx = _locationToIndex(context);
+    final idx      = _locationToIndex(context);
     final username = ref.watch(authProvider).username ?? '';
-    final display = username.contains('@') ? username.split('@').first : username;
+    final display  = username.contains('@') ? username.split('@').first : username;
 
     return Scaffold(
-      body: Stack(
-        children: [
-          widget.child,
-          if (idx != 1)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 8,
-              right: 12,
-              child: _RescuerBadge(
-                display: display,
-                ref: ref,
-                context: context,
-              ),
-            ),
-        ],
+      body: SafeArea(
+        child: Column(
+          children: [
+            _RescuerHeader(display: display, username: username, ref: ref),
+            Expanded(child: widget.child),
+          ],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: idx,
@@ -60,17 +60,17 @@ class _RescuerShellState extends ConsumerState<RescuerShell> {
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
+            icon:         Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard),
             label: 'Dashboard',
           ),
           NavigationDestination(
-            icon: Icon(Icons.map_outlined),
+            icon:         Icon(Icons.map_outlined),
             selectedIcon: Icon(Icons.map),
             label: 'Rescue Map',
           ),
           NavigationDestination(
-            icon: Icon(Icons.warning_amber_outlined),
+            icon:         Icon(Icons.warning_amber_outlined),
             selectedIcon: Icon(Icons.warning_amber),
             label: 'Triage Queue',
           ),
@@ -80,126 +80,75 @@ class _RescuerShellState extends ConsumerState<RescuerShell> {
   }
 }
 
-class _RescuerBadge extends StatelessWidget {
+class _RescuerHeader extends StatelessWidget {
   final String display;
+  final String username;
   final WidgetRef ref;
-  final BuildContext context;
 
-  const _RescuerBadge({
+  const _RescuerHeader({
     required this.display,
+    required this.username,
     required this.ref,
-    required this.context,
   });
 
   @override
-  Widget build(BuildContext _) {
-    return GestureDetector(
-      onTap: _showMenu,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A3A2A).withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF2E7D32)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 6,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset('asset/logo2.png', width: 18, height: 18),
-            const SizedBox(width: 6),
-            const Icon(Icons.emergency, color: Color(0xFF4CAF50), size: 14),
-            const SizedBox(width: 4),
-            Text(
-              display,
-              style: const TextStyle(
-                color: Color(0xFF81C784),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 4),
-            const Icon(Icons.expand_more, color: Color(0xFF4CAF50), size: 14),
-          ],
-        ),
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.divider)),
       ),
-    );
-  }
-
-  void _showMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  const Icon(Icons.emergency, color: Color(0xFF4CAF50), size: 22),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Rescuer Account',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                      Text(
-                        ref.read(authProvider).username ?? '',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Divider(color: AppColors.divider, indent: 20, endIndent: 20),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Color(0xFFF85149)),
-              title: const Text(
-                'Log Out',
+      child: Row(
+        children: [
+          Image.asset('asset/logo2.png', width: 36, height: 36),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'L.I.G.T.A.S.',
                 style: TextStyle(
-                  color: Color(0xFFF85149),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                  letterSpacing: 2,
+                ),
+              ),
+              Text(
+                'Rescuer Portal',
+                style: TextStyle(
+                  color: AppColors.accent,
+                  fontSize: 10,
+                  letterSpacing: 1,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                display,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await ref.read(authProvider.notifier).logout();
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
+              GestureDetector(
+                onTap: () => ref.read(authProvider.notifier).logout(),
+                child: Text(
+                  'Log out',
+                  style: TextStyle(color: AppColors.accent, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

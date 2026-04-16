@@ -46,7 +46,9 @@ class HouseholdCard extends ConsumerWidget {
     final myAsset = ref.watch(myAssetProvider);
     final isAssignedToMe = myAsset != null && h.assignedAssetId == myAsset.id;
     final isAssignedElsewhere = h.assignedAssetId != null && !isAssignedToMe;
-    final canCompleteRescue = isAssignedToMe;
+    // Enabled unless explicitly assigned to a different team.
+    // This lets rescuers complete unassigned or self-dispatched rescues.
+    final canCompleteRescue = !isAssignedElsewhere;
 
     return Opacity(
       opacity: isRescued ? 0.78 : 1,

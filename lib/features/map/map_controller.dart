@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show min, max;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,13 +29,18 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
           routeDistanceMeters: null,
         ));
 
-  final _completer = Completer<GoogleMapController>();
+  // Non-final so it can be reset when a new GoogleMap widget is mounted
+  // (e.g. navigating away from /rescuer and back creates a fresh controller).
+  Completer<GoogleMapController> _completer = Completer<GoogleMapController>();
   final _dio = Dio();
 
   Future<GoogleMapController> get _ctrl => _completer.future;
 
   void onMapCreated(GoogleMapController controller) {
-    if (!_completer.isCompleted) _completer.complete(controller);
+    if (_completer.isCompleted) {
+      _completer = Completer<GoogleMapController>();
+    }
+    _completer.complete(controller);
   }
 
   void onCameraMove(CameraPosition position) {
@@ -236,7 +242,7 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       clearNearestAsset: true,
       clearRouteDistance: true,
     );
-    
+
     final ctrl = await _ctrl;
     ctrl.animateCamera(
       CameraUpdate.newCameraPosition(
@@ -244,46 +250,98 @@ class MapControllerNotifier extends StateNotifier<MapControllerState> {
       ),
     );
 
+    // Obtain rescuer GPS — gracefully skip routing if unavailable.
+    Position? pos;
     try {
-      final pos = await Geolocator.getCurrentPosition();
-      state = state.copyWith(isRouting: true);
+      final svcEnabled = await Geolocator.isLocationServiceEnabled();
+      final perm = await Geolocator.checkPermission();
+      if (svcEnabled &&
+          perm != LocationPermission.denied &&
+          perm != LocationPermission.deniedForever) {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+      }
+    } catch (_) {}
 
+    if (pos == null) return; // No GPS — household is already selected + zoomed.
+
+    state = state.copyWith(isRouting: true);
+    final origin = LatLng(pos.latitude, pos.longitude);
+    final dest   = LatLng(h.latitude, h.longitude);
+
+    // Try Directions API first.
+    bool routedViaApi = false;
+    try {
       final response = await _dio.get(
         'https://maps.googleapis.com/maps/api/directions/json',
         queryParameters: {
-          'origin': '${pos.latitude},${pos.longitude}',
+          'origin':      '${pos.latitude},${pos.longitude}',
           'destination': '${h.latitude},${h.longitude}',
-          'key': ApiKeys.googleMaps,
+          'key':  ApiKeys.googleMaps,
           'mode': 'driving',
         },
       );
 
       final routes = response.data['routes'] as List?;
-      if (routes == null || routes.isEmpty) {
-        state = state.copyWith(isRouting: false);
-        return;
+      if (routes != null && routes.isNotEmpty) {
+        final points = decodePolyline(
+            routes[0]['overview_polyline']['points'] as String);
+        final legs = routes[0]['legs'] as List?;
+        final dist = legs != null
+            ? (legs[0]['distance']['value'] as int).toDouble()
+            : null;
+
+        state = state.copyWith(
+          isRouting: false,
+          polylines: {
+            Polyline(
+              polylineId: const PolylineId('gps_route'),
+              points: points,
+              color: const Color(0xFF4CAF50),
+              width: 5,
+            ),
+          },
+          routeDistanceMeters: dist,
+        );
+        routedViaApi = true;
+        await _fitBounds(ctrl, origin, dest);
       }
+    } catch (_) {}
 
-      final encoded = routes[0]['overview_polyline']['points'] as String;
-      final points = decodePolyline(encoded);
-      final legs = routes[0]['legs'] as List?;
-      double? dist = legs != null ? (legs[0]['distance']['value'] as int).toDouble() : null;
-
+    // Fallback: straight-line dashed polyline when API is unavailable.
+    if (!routedViaApi) {
       state = state.copyWith(
         isRouting: false,
         polylines: {
           Polyline(
             polylineId: const PolylineId('gps_route'),
-            points: points,
+            points: [origin, dest],
             color: const Color(0xFF4CAF50),
-            width: 5,
+            width: 4,
+            patterns: [PatternItem.dash(20), PatternItem.gap(10)],
           ),
         },
-        routeDistanceMeters: dist,
       );
-    } catch (_) {
-      state = state.copyWith(isRouting: false);
+      await _fitBounds(ctrl, origin, dest);
     }
+  }
+
+  Future<void> _fitBounds(
+      GoogleMapController ctrl, LatLng a, LatLng b) async {
+    try {
+      final pad = 0.003;
+      final bounds = LatLngBounds(
+        southwest: LatLng(min(a.latitude, b.latitude) - pad,
+            min(a.longitude, b.longitude) - pad),
+        northeast: LatLng(max(a.latitude, b.latitude) + pad,
+            max(a.longitude, b.longitude) + pad),
+      );
+      ctrl.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    } catch (_) {}
   }
 
   Future<void> loadRoute(Household h, List<Asset> assets) async {
