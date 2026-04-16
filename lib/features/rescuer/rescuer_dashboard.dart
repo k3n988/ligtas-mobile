@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/models/asset.dart';
 import '../../core/models/household.dart';
 import '../../core/models/triage_level.dart';
@@ -111,7 +112,10 @@ class RescuerDashboard extends ConsumerWidget {
                     const SizedBox(height: 10),
                     myAsset == null
                         ? _emptyCard('No asset assigned to your account.')
-                        : _AssetCard(asset: myAsset, highlightAsMine: true),
+                        : _MyUnitHeroCard(
+                            asset: myAsset,
+                            dispatchedCount: dispatched.length,
+                          ),
                   ],
                 ),
               ),
@@ -394,6 +398,204 @@ class _AssetCard extends StatelessWidget {
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.5,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MyUnitHeroCard extends StatelessWidget {
+  final Asset asset;
+  final int dispatchedCount;
+
+  const _MyUnitHeroCard({
+    required this.asset,
+    required this.dispatchedCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = asset.status == AssetStatus.active
+        ? const Color(0xFF238636)
+        : asset.status == AssetStatus.dispatching
+            ? AppColors.high
+            : AppColors.textSecondary;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1A2D4A), Color(0xFF13253D)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: Text(asset.icon, style: const TextStyle(fontSize: 24)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'ASSIGNED UNIT',
+                      style: AppTextStyles.labelSmall.copyWith(
+                        color: AppColors.accent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      asset.name,
+                      style: AppTextStyles.titleMedium.copyWith(
+                        color: AppColors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${asset.type} • ${asset.unit}',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+                ),
+                child: Text(
+                  asset.status.name.toUpperCase(),
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _heroStat(
+                  label: 'Capacity',
+                  value: '${asset.capacity}',
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _heroStat(
+                  label: 'Dispatched',
+                  value: '$dispatchedCount',
+                  color: dispatchedCount > 0
+                      ? AppColors.high
+                      : const Color(0xFF238636),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => context.go('/rescuer'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.map, size: 18),
+              label: const Text(
+                'OPEN RESCUE MAP',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _heroStat({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: AppTextStyles.labelSmall.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: AppTextStyles.titleMedium.copyWith(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
