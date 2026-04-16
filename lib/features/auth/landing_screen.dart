@@ -365,6 +365,13 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     final hazardCircles = _buildHazardCircles(activeHazards);
     final hazardMarkers = _buildHazardMarkers(activeHazards);
 
+    ref.listen<HazardMapFocusRequest?>(hazardMapFocusProvider, (_, next) {
+      if (next == null) return;
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(next.lat, next.lng), next.zoom),
+      );
+    });
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(

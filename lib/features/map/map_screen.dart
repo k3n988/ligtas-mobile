@@ -156,6 +156,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
     });
 
+    ref.listen<HazardMapFocusRequest?>(hazardMapFocusProvider, (_, next) {
+      if (next == null) return;
+      ctrl.animateTo(LatLng(next.lat, next.lng), zoom: next.zoom);
+    });
+
     final hazardCircles  = _buildHazardCircles(activeHazards);
     final hazardMarkers  = _buildHazardMarkers(activeHazards);
 

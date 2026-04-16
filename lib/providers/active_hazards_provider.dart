@@ -143,3 +143,20 @@ final isSelectingHazardCenterProvider = StateProvider<bool>((ref) => false);
 /// Holds the tapped coords until admin confirms and activates.
 final draftHazardCenterProvider =
     StateProvider<({double lat, double lng})?> ((ref) => null);
+
+class HazardMapFocusRequest {
+  final String hazardId;
+  final double lat;
+  final double lng;
+  final double zoom;
+
+  const HazardMapFocusRequest({
+    required this.hazardId,
+    required this.lat,
+    required this.lng,
+    this.zoom = 12,
+  });
+}
+
+final hazardMapFocusProvider =
+    StateProvider<HazardMapFocusRequest?>((ref) => null);

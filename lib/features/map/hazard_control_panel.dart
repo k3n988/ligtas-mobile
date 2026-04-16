@@ -54,6 +54,15 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
         (lat: h.centerLat, lng: h.centerLng);
   }
 
+  void _focusHazardOnMap(ActiveHazard h) {
+    if (h.type == 'Flood') return;
+    ref.read(hazardMapFocusProvider.notifier).state = HazardMapFocusRequest(
+      hazardId: h.id,
+      lat: h.centerLat,
+      lng: h.centerLng,
+    );
+  }
+
   Future<void> _activate() async {
     final center = ref.read(draftHazardCenterProvider);
     if (center == null) return;
@@ -105,7 +114,12 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
                   ? 'HAZARD LAYER · ${_hazardType.toUpperCase()}'
                   : 'HAZARD LAYER',
               active: hazards.isNotEmpty,
-              onTap: () => setState(() => _isOpen = !_isOpen),
+              onTap: () {
+                if (hazards.isNotEmpty) {
+                  _focusHazardOnMap(focused ?? hazards.first);
+                }
+                setState(() => _isOpen = !_isOpen);
+              },
             ),
             ...hazards.map((h) => _ActiveBadge(
                   label:   'ACTIVE: ${h.type.toUpperCase()}',
@@ -116,6 +130,7 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
                       _isOpen      = true;
                     });
                     _prefillFromHazard(h);
+                    _focusHazardOnMap(h);
                   },
                 )),
           ],
@@ -338,6 +353,7 @@ class _HazardControlPanelState extends ConsumerState<HazardControlPanel> {
               onTap: () {
                 setState(() => _focusedType = hz.type);
                 _prefillFromHazard(hz);
+                _focusHazardOnMap(hz);
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
