@@ -13,14 +13,20 @@ import '../../providers/app_state.dart';
 class HouseholdCard extends ConsumerWidget {
   final Household household;
   final int queuePosition;
+  final bool isInHazardZone;
+  final List<String> matchingHazardTypes;
+  final TriageLevel? effectiveLevel;
 
   const HouseholdCard({
     super.key,
     required this.household,
     required this.queuePosition,
+    this.isInHazardZone = false,
+    this.matchingHazardTypes = const [],
+    this.effectiveLevel,
   });
 
-  Color get _accentColor => household.triageLevel.color;
+  Color get _accentColor => (effectiveLevel ?? household.triageLevel).color;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -70,7 +76,32 @@ class HouseholdCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  TriageBadge(level: h.triageLevel),
+                  if (isInHazardZone) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF4D4D).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                            color: const Color(0xFFFF4D4D)
+                                .withValues(alpha: 0.5)),
+                      ),
+                      child: Text(
+                        matchingHazardTypes.isNotEmpty
+                            ? '⚠ ${matchingHazardTypes.join(', ')}'
+                            : '⚠ Hazard Zone',
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFFF4D4D),
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  TriageBadge(level: effectiveLevel ?? h.triageLevel),
                 ],
               ),
             ),
